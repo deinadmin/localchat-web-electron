@@ -14,6 +14,7 @@ import { ScrollProvider, useScroll } from "@/lib/scroll-context";
 import { useChatSync } from "@/lib/use-chat-sync";
 import { useChatUrlSync } from "@/lib/use-chat-url-sync";
 import { Toaster } from "sonner";
+import { IconCircleCheck, IconCircleX, IconInfoCircle, IconLoader2 } from "@tabler/icons-react";
 
 // Component that initializes chat sync and URL sync
 function ChatSyncInitializer({ children }: { children: React.ReactNode }) {
@@ -96,7 +97,19 @@ export default function Page() {
               <MainContent />
             </Suspense>
           </TooltipProvider>
-          <Toaster position="bottom-right" />
+          <Toaster 
+            position="bottom-left" 
+            className="!bottom-6 !left-6"
+            icons={{
+              success: <IconCircleCheck className="!size-4 text-green-500" />,
+              error: <IconCircleX className="!size-4 text-red-500" />,
+              info: <IconInfoCircle className="!size-4 text-blue-500" />,
+              loading: <IconLoader2 className="!size-4 text-primary animate-spin" />,
+            }}
+            toastOptions={{
+              className: "!bg-background/80 dark:!bg-black/95 !backdrop-blur-xl !border-border/50 !shadow-lg !text-xs !py-2 !px-3 !min-h-0 !gap-1.5 !max-w-[284px] !rounded-xl",
+            }}
+          />
         </AuthProvider>
       </ThemeProvider>
     </ElectronProvider>

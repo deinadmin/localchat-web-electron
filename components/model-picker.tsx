@@ -113,8 +113,10 @@ export function parseModelName(modelId: string, modelName: string): { provider: 
   }
   
   // Clean the model name by removing any "Provider: " prefix pattern
-  // This regex matches any word characters (including spaces) followed by ": " at the start
-  const cleanName = modelName.replace(/^[A-Za-z0-9\s.-]+:\s*/, "");
+  // Split on first colon followed by space and take the part after it
+  const cleanName = modelName.includes(": ") 
+    ? modelName.split(": ").slice(1).join(": ")
+    : modelName;
   
   return { provider, cleanName };
 }

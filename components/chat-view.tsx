@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo, FormEvent, KeyboardEvent, ReactNode } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback, memo, FormEvent, KeyboardEvent, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useSidebar } from "@/components/ui/sidebar";
 import {
   ContextMenu,
@@ -62,10 +61,12 @@ import {
   IconSearch,
   IconAlertTriangle,
   IconPlayerStopFilled,
+  IconInfoCircle,
 } from "@tabler/icons-react";
+import { MessageInfoDialog } from "@/components/message-info-dialog";
 
 // Code block component with copy button and syntax highlighting
-function CodeBlock({ children, className, ...props }: { children?: ReactNode; className?: string }) {
+const CodeBlock = memo(function CodeBlock({ children, className, ...props }: { children?: ReactNode; className?: string }) {
   const [copied, setCopied] = useState(false);
   const codeRef = useRef<HTMLDivElement>(null);
 
@@ -76,12 +77,14 @@ function CodeBlock({ children, className, ...props }: { children?: ReactNode; cl
   // Get the code content as string
   const codeString = String(children).replace(/\n$/, "");
 
-  const handleCopy = async () => {
+  const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(codeString);
     setCopied(true);
-    toast.success("Code copied successfully");
+    toast.success("Code copied successfully", {
+      icon: <IconCopy className="size-4 text-green-500" />,
+    });
     setTimeout(() => setCopied(false), 2000);
-  };
+  }, [codeString]);
 
   return (
     <div className="group relative my-4 min-w-0 max-w-full w-full" ref={codeRef}>
@@ -93,15 +96,13 @@ function CodeBlock({ children, className, ...props }: { children?: ReactNode; cl
           aria-label="Copy code"
         >
           <div className="relative size-4">
-            <IconCopy 
-              className={`size-4 absolute inset-0 transition-all duration-200 ease-out ${
-                copied ? "opacity-0 scale-50 rotate-90" : "opacity-100 scale-100 rotate-0"
-              }`} 
+            <IconCopy
+              className={`size-4 absolute inset-0 transition-all duration-200 ease-out ${copied ? "opacity-0 scale-50 rotate-90" : "opacity-100 scale-100 rotate-0"
+                }`}
             />
-            <IconCheck 
-              className={`size-4 absolute inset-0 transition-all duration-200 ease-out ${
-                copied ? "opacity-100 scale-100 rotate-0 text-primary" : "opacity-0 scale-50 -rotate-90"
-              }`} 
+            <IconCheck
+              className={`size-4 absolute inset-0 transition-all duration-200 ease-out ${copied ? "opacity-100 scale-100 rotate-0 text-primary" : "opacity-0 scale-50 -rotate-90"
+                }`}
             />
           </div>
         </button>
@@ -125,7 +126,8 @@ function CodeBlock({ children, className, ...props }: { children?: ReactNode; cl
               borderRadius: 0,
               border: "none",
               fontSize: "0.875rem",
-              paddingTop: language ? "2rem" : undefined,
+              paddingTop: language ? "2rem" : "0.65rem",
+              paddingBottom: "0.75rem",
               minWidth: "100%",
               width: "fit-content",
             }}
@@ -137,7 +139,7 @@ function CodeBlock({ children, className, ...props }: { children?: ReactNode; cl
       </div>
     </div>
   );
-}
+});
 
 // Custom markdown components with shadcn styling
 const markdownComponents: Components = {
@@ -310,20 +312,8 @@ const markdownComponents: Components = {
   },
 };
 
-function MessageBubble({
-  message,
-  isStreaming,
-  isEditing,
-  editingContent,
-  onEditStart,
-  onEditChange,
-  onEditSave,
-  onEditCancel,
-  onDelete,
-  onRegenerate,
-  onRegenerateWithModel,
-  onReference,
-}: {
+// Props interface for MessageBubble (defined separately for memo)
+interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
   isEditing?: boolean;
@@ -336,12 +326,30 @@ function MessageBubble({
   onRegenerate?: () => void;
   onRegenerateWithModel?: (modelId: string) => void;
   onReference?: (text: string) => void;
-}) {
+  previousMessages?: Message[];
+}
+
+const MessageBubble = memo(function MessageBubble({
+  message,
+  isStreaming,
+  isEditing,
+  editingContent,
+  onEditStart,
+  onEditChange,
+  onEditSave,
+  onEditCancel,
+  onDelete,
+  onRegenerate,
+  onRegenerateWithModel,
+  onReference,
+  previousMessages,
+}: MessageBubbleProps) {
   const isUser = message.role === "user";
   const [selectedText, setSelectedText] = useState("");
   const [copied, setCopied] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [showInfoDialog, setShowInfoDialog] = useState(false);
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -401,7 +409,9 @@ function MessageBubble({
     try {
       await navigator.clipboard.writeText(message.content);
       setCopied(true);
-      toast.success("Copied to clipboard");
+      toast.success("Copied to clipboard", {
+        icon: <IconCopy className="size-4 text-green-500" />,
+      });
       setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error("Failed to copy");
@@ -455,7 +465,7 @@ function MessageBubble({
           <div
             className={`select-text min-w-0 ${isUser
               ? "max-w-[80%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5"
-              : "w-full px-1"
+              : "group/message w-full px-1"
               }`}
           >
             {isUser ? (
@@ -505,13 +515,13 @@ function MessageBubble({
                       <span>{message.error}</span>
                     </div>
                     {/* Action buttons for error state - same layout as normal messages */}
-                    <div className="flex items-center gap-1 mt-2 select-none">
+                    <div className={`flex items-center gap-1 mt-2 select-none h-7 transition-opacity duration-200 ${modelDropdownOpen ? "opacity-100" : "opacity-0 group-hover/message:opacity-100"}`}>
                       {/* Copy button - disabled for errors */}
                       <Button
                         variant="ghost"
                         size="sm"
                         disabled
-                        className="h-7 px-2 text-xs text-muted-foreground opacity-50"
+                        className="h-7 px-2 text-xs text-muted-foreground opacity-50 rounded-xl active:scale-95 transition-all duration-200"
                       >
                         <IconCopy className="size-3.5 mr-1" />
                         Copy
@@ -524,11 +534,11 @@ function MessageBubble({
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground select-none"
+                              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground select-none rounded-xl active:scale-95 transition-all duration-200"
                             >
                               <ProviderIcon provider={modelInfo.provider} className="size-3.5 mr-1" />
-                              {modelInfo.cleanName.length > 20
-                                ? modelInfo.cleanName.slice(0, 20) + "..."
+                              {modelInfo.cleanName.length > 50
+                                ? modelInfo.cleanName.slice(0, 50) + "..."
                                 : modelInfo.cleanName}
                               <IconChevronDown className="size-3 ml-1" />
                             </Button>
@@ -542,7 +552,7 @@ function MessageBubble({
                               <IconSearch className="size-3.5 text-muted-foreground shrink-0" />
                               <input
                                 ref={modelSearchRef}
-                                placeholder="Search..."
+                                placeholder="Regenerate with..."
                                 value={modelSearch}
                                 onChange={(e) => setModelSearch(e.target.value)}
                                 className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
@@ -581,7 +591,7 @@ function MessageBubble({
                         variant="ghost"
                         size="sm"
                         onClick={onDelete}
-                        className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                        className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive rounded-xl active:scale-95 transition-all duration-200"
                       >
                         <IconTrash className="size-3.5" />
                       </Button>
@@ -605,13 +615,13 @@ function MessageBubble({
                     </div>
                     {/* Action buttons for AI messages */}
                     {!isStreaming && message.content && (
-                      <div className="flex items-center gap-1 mt-2 select-none">
+                      <div className={`flex items-center gap-1 mt-2 select-none h-7 transition-opacity duration-200 ${modelDropdownOpen ? "opacity-100" : "opacity-0 group-hover/message:opacity-100"}`}>
                         {/* Copy button */}
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={handleCopy}
-                          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground rounded-xl active:scale-95 transition-all duration-200"
                         >
                           {copied ? (
                             <IconCheck className="size-3.5 mr-1" />
@@ -628,11 +638,11 @@ function MessageBubble({
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground select-none"
+                                className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground select-none rounded-xl active:scale-95 transition-all duration-200"
                               >
                                 <ProviderIcon provider={modelInfo.provider} className="size-3.5 mr-1" />
-                                {modelInfo.cleanName.length > 20
-                                  ? modelInfo.cleanName.slice(0, 20) + "..."
+                                {modelInfo.cleanName.length > 50
+                                  ? modelInfo.cleanName.slice(0, 50) + "..."
                                   : modelInfo.cleanName}
                                 <IconChevronDown className="size-3 ml-1" />
                               </Button>
@@ -646,7 +656,7 @@ function MessageBubble({
                                 <IconSearch className="size-3.5 text-muted-foreground shrink-0" />
                                 <input
                                   ref={modelSearchRef}
-                                  placeholder="Search..."
+                                  placeholder="Regenerate with..."
                                   value={modelSearch}
                                   onChange={(e) => setModelSearch(e.target.value)}
                                   className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
@@ -686,7 +696,7 @@ function MessageBubble({
                           variant="ghost"
                           size="sm"
                           onClick={onDelete}
-                          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive rounded-xl active:scale-95 transition-all duration-200"
                         >
                           <IconTrash className="size-3.5" />
                         </Button>
@@ -707,7 +717,9 @@ function MessageBubble({
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(selectedText);
-                    toast.success("Copied to clipboard");
+                    toast.success("Copied to clipboard", {
+                      icon: <IconCopy className="size-4 text-green-500" />,
+                    });
                   } catch {
                     toast.error("Failed to copy");
                   }
@@ -720,6 +732,10 @@ function MessageBubble({
             <ContextMenuItem onClick={onEditStart} disabled={isEditing}>
               <IconPencil className="size-4 mr-2" />
               Edit message
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => setShowInfoDialog(true)}>
+              <IconInfoCircle className="size-4 mr-2" />
+              Message information
             </ContextMenuItem>
             <ContextMenuItem
               variant="destructive"
@@ -737,7 +753,9 @@ function MessageBubble({
                   onClick={async () => {
                     try {
                       await navigator.clipboard.writeText(selectedText);
-                      toast.success("Copied to clipboard");
+                      toast.success("Copied to clipboard", {
+                        icon: <IconCopy className="size-4 text-green-500" />,
+                      });
                     } catch {
                       toast.error("Failed to copy");
                     }
@@ -756,6 +774,10 @@ function MessageBubble({
               <IconRefresh className="size-4 mr-2" />
               Regenerate message
             </ContextMenuItem>
+            <ContextMenuItem onClick={() => setShowInfoDialog(true)}>
+              <IconInfoCircle className="size-4 mr-2" />
+              Message information
+            </ContextMenuItem>
             <ContextMenuItem
               variant="destructive"
               onClick={onDelete}
@@ -766,9 +788,28 @@ function MessageBubble({
           </>
         )}
       </ContextMenuContent>
+      <MessageInfoDialog
+        open={showInfoDialog}
+        onOpenChange={setShowInfoDialog}
+        message={message}
+        model={modelInfo?.model || null}
+        modelProvider={modelInfo?.provider || null}
+        modelCleanName={modelInfo?.cleanName || null}
+        previousMessages={previousMessages}
+      />
     </ContextMenu>
   );
-}
+}, (prevProps, nextProps) => {
+  // Custom comparison for memo - only re-render when these specific props change
+  return (
+    prevProps.message.id === nextProps.message.id &&
+    prevProps.message.content === nextProps.message.content &&
+    prevProps.message.error === nextProps.message.error &&
+    prevProps.isStreaming === nextProps.isStreaming &&
+    prevProps.isEditing === nextProps.isEditing &&
+    prevProps.editingContent === nextProps.editingContent
+  );
+});
 
 function EmptyState() {
   return (
@@ -784,15 +825,8 @@ function EmptyState() {
   );
 }
 
-function FloatingInput({
-  input,
-  setInput,
-  isLoading,
-  onSubmit,
-  onStop,
-  textareaRef,
-  fullWidth,
-}: {
+// Props interface for FloatingInput
+interface FloatingInputProps {
   input: string;
   setInput: (value: string) => void;
   isLoading: boolean;
@@ -800,7 +834,17 @@ function FloatingInput({
   onStop: () => void;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   fullWidth?: boolean;
-}) {
+}
+
+const FloatingInput = memo(function FloatingInput({
+  input,
+  setInput,
+  isLoading,
+  onSubmit,
+  onStop,
+  textareaRef,
+  fullWidth,
+}: FloatingInputProps) {
   const LINE_HEIGHT = 20; // Approximate line height in pixels
   const MAX_LINES = 8;
   const MAX_HEIGHT = LINE_HEIGHT * MAX_LINES;
@@ -956,7 +1000,7 @@ function FloatingInput({
       </form>
     </div>
   );
-}
+});
 
 export function ChatView() {
   const [input, setInput] = useState("");
@@ -971,10 +1015,18 @@ export function ChatView() {
   const { setIsScrolled } = useScroll();
   const { fullWidthChat } = useLocalSettingsStore();
 
+  // Use separate selectors for better performance - only subscribe to what we need
+  const activeChatId = useChatStore((state) => state.activeChatId);
+  const isLoading = useChatStore((state) => state.isLoading);
+  const streamingMessageId = useChatStore((state) => state.streamingMessageId);
+
+  // Use a memoized selector for activeChat to prevent unnecessary re-renders
+  const activeChat = useChatStore(
+    useCallback((state) => state.chats.find((c) => c.id === state.activeChatId), [])
+  );
+
+  // Get store actions (these are stable references)
   const {
-    activeChatId,
-    isLoading,
-    streamingMessageId,
     createChat,
     addMessage,
     addMessageWithId,
@@ -984,19 +1036,20 @@ export function ChatView() {
     setMessageError,
     setLoading,
     setStreamingMessageId,
-    getActiveChat,
   } = useChatStore();
 
   const { selectedModel, providers, setSelectedModel } = useProvidersStore();
 
-  const activeChat = getActiveChat();
+  // Memoize message count and last message content for scroll effect
+  const messageCount = activeChat?.messages.length ?? 0;
+  const lastMessageContent = activeChat?.messages[messageCount - 1]?.content ?? "";
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive or content changes (streaming)
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [activeChat?.messages]);
+  }, [messageCount, lastMessageContent]);
 
   // Focus input when chat changes
   useEffect(() => {
@@ -1124,6 +1177,24 @@ export function ChatView() {
     }
   };
 
+  // Memoized callbacks for MessageBubble to prevent unnecessary re-renders
+  const handleEditChange = useCallback((content: string) => {
+    setEditingContent(content);
+  }, []);
+
+  const handleEditCancel = useCallback(() => {
+    setEditingMessageId(null);
+    setEditingContent("");
+  }, []);
+
+  const handleReference = useCallback((text: string) => {
+    const quotedText = text.split('\n').map(line => `> ${line}`).join('\n');
+    setInput(prev => prev ? `${prev}\n\n${quotedText}\n\n` : `${quotedText}\n\n`);
+    setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 0);
+  }, []);
+
   if (!activeChatId) {
     // Reset scroll state for empty state (no scrollable content)
     setIsScrolled(false);
@@ -1174,7 +1245,7 @@ export function ChatView() {
                   setEditingMessageId(message.id);
                   setEditingContent(message.content);
                 }}
-                onEditChange={(content) => setEditingContent(content)}
+                onEditChange={handleEditChange}
                 onEditSave={() => {
                   if (activeChatId && editingContent.trim()) {
                     updateMessageContent(activeChatId, message.id, editingContent.trim());
@@ -1183,10 +1254,7 @@ export function ChatView() {
                   setEditingMessageId(null);
                   setEditingContent("");
                 }}
-                onEditCancel={() => {
-                  setEditingMessageId(null);
-                  setEditingContent("");
-                }}
+                onEditCancel={handleEditCancel}
                 onDelete={() => {
                   setDeleteMessageId(message.id);
                 }}
@@ -1212,15 +1280,7 @@ export function ChatView() {
                     }
                   }
                 }}
-                onReference={(text) => {
-                  // Add the quoted text to the input
-                  const quotedText = text.split('\n').map(line => `> ${line}`).join('\n');
-                  setInput(prev => prev ? `${prev}\n\n${quotedText}\n\n` : `${quotedText}\n\n`);
-                  // Focus after state update
-                  setTimeout(() => {
-                    textareaRef.current?.focus();
-                  }, 0);
-                }}
+                onReference={handleReference}
                 onRegenerateWithModel={async (modelId) => {
                   // Regenerate this message with the selected model
                   if (activeChatId && message.role === "assistant") {
@@ -1312,6 +1372,7 @@ export function ChatView() {
                     }
                   }
                 }}
+                previousMessages={activeChat?.messages.slice(0, index)}
               />
             ))
           )}
@@ -1354,7 +1415,9 @@ export function ChatView() {
               onClick={() => {
                 if (activeChatId && deleteMessageId) {
                   deleteMessage(activeChatId, deleteMessageId);
-                  toast.success("Message deleted");
+                  toast.success("Message deleted", {
+                    icon: <IconTrash className="size-4 text-red-500" />,
+                  });
                 }
                 setDeleteMessageId(null);
               }}

@@ -11,11 +11,10 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarInput,
-  SidebarSeparator,
   SidebarMenuAction,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { SearchModal } from "@/components/search-modal";
 import {
   Dialog,
   DialogContent,
@@ -113,7 +112,7 @@ const PROVIDER_INFO: Record<
 };
 
 export function AppSidebar() {
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false);
   const [selectedProviderType, setSelectedProviderType] =
@@ -137,6 +136,19 @@ export function AppSidebar() {
     }
   }, [editingChatId]);
 
+  // Global keyboard shortcut for search (Cmd/Ctrl + K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const { chats, activeChatId, createChat, setActiveChat, deleteChat, updateChatTitle, togglePinChat, getChatById } =
     useChatStore();
   const { state } = useSidebar();
@@ -157,10 +169,10 @@ export function AppSidebar() {
       const lastAssistantMessage = [...chat.messages]
         .reverse()
         .find((m) => m.role === "assistant" && m.modelId);
-      
+
       if (lastAssistantMessage?.modelId) {
         // Find the provider that has this model
-        const provider = providers.find((p) => 
+        const provider = providers.find((p) =>
           p.models?.some((m) => m.id === lastAssistantMessage.modelId)
         );
         if (provider) {
@@ -216,19 +228,13 @@ export function AppSidebar() {
   }, [user]);
 
   const filteredChats = useMemo(() => {
-    let result = chats;
-    if (searchQuery.trim()) {
-      result = chats.filter((chat) =>
-        chat.title.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
     // Sort pinned chats first, then by most recent
-    return [...result].sort((a, b) => {
+    return [...chats].sort((a, b) => {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
       return 0; // Keep original order (already sorted by updatedAt from Firestore)
     });
-  }, [chats, searchQuery]);
+  }, [chats]);
 
   const handleNewChat = () => {
     // Just navigate to empty state (no active chat)
@@ -348,12 +354,13 @@ export function AppSidebar() {
     <>
       <Sidebar collapsible="offcanvas" onContextMenu={(e) => e.preventDefault()}>
         <SidebarHeader
+          className="px-2 py-1"
           onContextMenu={(e) => e.preventDefault()}
           style={{ WebkitAppRegion: isMacElectron ? "drag" : undefined } as React.CSSProperties}
         >
           {/* Draggable area with window controls for macOS Electron */}
           {isMacElectron && (
-            <div className="flex items-center h-10 pl-[18px] pt-[6px] -mx-2 -mt-2 mb-[-6px]">
+            <div className="flex items-center h-10 pl-[18px] pt-[6px] -mx-2 -mt-1 mb-[-6px]">
               <div
                 className="z-50"
                 style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
@@ -426,7 +433,7 @@ export function AppSidebar() {
         </SidebarHeader>
 
         <SidebarContent onContextMenu={(e) => e.preventDefault()}>
-          <SidebarGroup>
+          <SidebarGroup className="px-2 py-0">
             <SidebarGroupContent>
               <SidebarMenu>
                 {/* New Chat Button */}
@@ -434,44 +441,46 @@ export function AppSidebar() {
                   <SidebarMenuButton
                     onClick={handleNewChat}
                     tooltip="New Chat"
-                    disabled={!activeChatId}
-                    className={!activeChatId
-                      ? "bg-primary/50 text-primary-foreground cursor-not-allowed"
-                      : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
-                    }
+                    className={"bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground mb-1"}
                   >
                     <IconPlus className="size-4" />
                     <span>New Chat</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-
-                {/* Search */}
-                {!isCollapsed && (
-                  <SidebarMenuItem>
-                    <div className="relative w-full px-0 py-1">
-                      <IconSearch className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                      <SidebarInput
-                        placeholder="Search chats..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-8"
-                      />
-                    </div>
-                  </SidebarMenuItem>
-                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
 
-          <SidebarSeparator className="group-data-[collapsible=icon]:hidden" />
+          <SidebarGroup className="px-2 py-0">
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {/* Search Button */}
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    onClick={() => setSearchOpen(true)}
+                    tooltip="Search Chats (⌘K)"
+                    className="text-muted-foreground hover:text-foreground mb-1"
+                  >
+                    <IconSearch className="size-4" />
+                    <span className="flex-1">Search Chats</span>
+                    {!isCollapsed && (
+                      <kbd className="hidden sm:inline-flex px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground">
+                        ⌘K
+                      </kbd>
+                    )}
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
 
           {/* Chat List */}
-          <SidebarGroup className="group-data-[collapsible=icon]:hidden flex-1" onContextMenu={(e) => e.stopPropagation()}>
+          <SidebarGroup className="group-data-[collapsible=icon]:hidden flex-1 px-2 py-0" onContextMenu={(e) => e.stopPropagation()}>
             <SidebarGroupContent>
               <SidebarMenu>
                 {filteredChats.length === 0 ? (
                   <p className="px-2 py-4 text-center text-sm text-muted-foreground">
-                    {searchQuery ? "No chats found" : "No chats yet"}
+                    No chats yet
                   </p>
                 ) : (
                   filteredChats.map((chat) => (
@@ -481,7 +490,7 @@ export function AppSidebar() {
                           {editingChatId === chat.id ? (
                             <SidebarMenuButton
                               isActive={activeChatId === chat.id}
-                              className="cursor-default hover:bg-transparent"
+                              className="cursor-default hover:bg-transparent mb-1"
                             >
                               {chat.pinned ? (
                                 <IconPin className="size-4 text-primary shrink-0" />
@@ -530,6 +539,7 @@ export function AppSidebar() {
                                 isActive={activeChatId === chat.id}
                                 onClick={() => handleSelectChat(chat.id)}
                                 tooltip={chat.title}
+                                className="mb-1"
                               >
                                 {chat.pinned ? (
                                   <IconPin className="size-4 text-primary" />
@@ -768,7 +778,7 @@ export function AppSidebar() {
                     System
                   </Button>
                 </div>
-                
+
                 {/* Full-width Chat Toggle */}
                 <div className="flex items-center justify-between rounded-lg border p-3">
                   <div className="space-y-0.5">
@@ -880,7 +890,9 @@ export function AppSidebar() {
                       console.error("Failed to delete chat from Firestore:", error);
                     }
                   }
-                  toast.success("Chat deleted");
+                  toast.success("Chat deleted", {
+                    icon: <IconTrash className="size-4 text-red-500" />,
+                  });
                 }
                 setDeleteChatId(null);
               }}
@@ -916,6 +928,9 @@ export function AppSidebar() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Search Modal */}
+      <SearchModal open={searchOpen} onOpenChange={setSearchOpen} />
     </>
   );
 }
