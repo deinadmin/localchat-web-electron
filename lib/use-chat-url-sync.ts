@@ -8,7 +8,7 @@ import { useProvidersStore } from "./providers-store";
 export function useChatUrlSync() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { activeChatId, chats, setActiveChat, getChatById } = useChatStore();
+  const { activeChatId, chats, setActiveChat, getChatById, isInitialSyncComplete } = useChatStore();
   const { providers, setSelectedModel } = useProvidersStore();
   
   // Track if we're currently updating to prevent loops
@@ -36,8 +36,8 @@ export function useChatUrlSync() {
 
   // On initial load: Read chatId from URL and set active chat
   useEffect(() => {
-    // Only run once when chats are first loaded
-    if (hasInitializedRef.current || chats.length === 0) return;
+    // Only run once when initial sync is complete
+    if (hasInitializedRef.current || !isInitialSyncComplete) return;
     
     const chatIdFromUrl = searchParams.get("chatId");
     
@@ -60,12 +60,15 @@ export function useChatUrlSync() {
     }
     
     hasInitializedRef.current = true;
-  }, [chats.length, searchParams, setActiveChat, router, providers, getChatById, setSelectedModel]);
+  }, [isInitialSyncComplete, chats, searchParams, setActiveChat, router, providers, getChatById, setSelectedModel]);
 
   // When activeChatId changes (from user interaction), update the URL
   useEffect(() => {
     // Skip if this change came from URL sync
     if (isUpdatingFromUrlRef.current) return;
+    
+    // Don't modify URL until initial sync from URL is complete
+    if (!hasInitializedRef.current) return;
     
     const currentUrlChatId = searchParams.get("chatId");
     

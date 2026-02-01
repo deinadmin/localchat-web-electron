@@ -156,7 +156,7 @@ export function AppSidebar() {
   const { providers, addProvider, removeProvider, updateProvider, setSelectedModel } =
     useProvidersStore();
   const { theme, setTheme } = useTheme();
-  const { fullWidthChat, setFullWidthChat } = useLocalSettingsStore();
+  const { fullWidthChat, setFullWidthChat, showEstimatedCost, setShowEstimatedCost } = useLocalSettingsStore();
   const { isElectron, platform } = useElectron();
   const isMacElectron = isElectron && platform === "darwin";
   const isCollapsed = state === "collapsed";
@@ -745,42 +745,50 @@ export function AppSidebar() {
               <Separator />
 
               {/* Appearance Section */}
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <h3 className="text-sm font-medium text-muted-foreground">
                   Appearance
                 </h3>
-                <div className="flex items-center gap-1 p-1 rounded-lg bg-muted">
-                  <Button
-                    variant={theme === "light" ? "secondary" : "ghost"}
-                    size="sm"
+                <div className="relative flex items-center p-1 rounded-lg bg-background border">
+                  {/* Sliding indicator */}
+                  <div
+                    className="absolute top-1 bottom-1 rounded-md bg-primary transition-all duration-300 ease-out"
+                    style={{
+                      left: theme === "light" ? "4px" : theme === "dark" ? "calc(33.33% + 2px)" : "calc(66.66% + 0px)",
+                      width: "calc(33.33% - 4px)",
+                    }}
+                  />
+                  <button
                     onClick={() => setTheme("light")}
-                    className="flex-1 gap-1.5"
+                    className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 text-sm font-medium rounded-md transition-colors duration-200 ${
+                      theme === "light" ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
                   >
                     <IconSun className="size-4" />
                     Light
-                  </Button>
-                  <Button
-                    variant={theme === "dark" ? "secondary" : "ghost"}
-                    size="sm"
+                  </button>
+                  <button
                     onClick={() => setTheme("dark")}
-                    className="flex-1 gap-1.5"
+                    className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 text-sm font-medium rounded-md transition-colors duration-200 ${
+                      theme === "dark" ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
                   >
                     <IconMoon className="size-4" />
                     Dark
-                  </Button>
-                  <Button
-                    variant={theme === "system" ? "secondary" : "ghost"}
-                    size="sm"
+                  </button>
+                  <button
                     onClick={() => setTheme("system")}
-                    className="flex-1 gap-1.5"
+                    className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 text-sm font-medium rounded-md transition-colors duration-200 ${
+                      theme === "system" ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
                   >
                     <IconDeviceDesktop className="size-4" />
                     System
-                  </Button>
+                  </button>
                 </div>
 
                 {/* Full-width Chat Toggle */}
-                <div className="flex items-center justify-between rounded-lg border p-3">
+                <div className="flex items-center justify-between py-1">
                   <div className="space-y-0.5">
                     <label htmlFor="full-width-chat" className="text-sm font-medium cursor-pointer">
                       Full-width Chat
@@ -793,6 +801,23 @@ export function AppSidebar() {
                     id="full-width-chat"
                     checked={fullWidthChat}
                     onCheckedChange={setFullWidthChat}
+                  />
+                </div>
+
+                {/* Show Estimated Cost Toggle */}
+                <div className="flex items-center justify-between py-1">
+                  <div className="space-y-0.5">
+                    <label htmlFor="show-estimated-cost" className="text-sm font-medium cursor-pointer">
+                      Show estimated message cost
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                      Show the estimated cost under each message
+                    </p>
+                  </div>
+                  <Switch
+                    id="show-estimated-cost"
+                    checked={showEstimatedCost}
+                    onCheckedChange={setShowEstimatedCost}
                   />
                 </div>
               </div>

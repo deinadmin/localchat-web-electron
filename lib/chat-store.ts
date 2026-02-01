@@ -26,6 +26,7 @@ interface ChatState {
   isLoading: boolean;
   streamingMessageId: string | null;
   userId: string | null;
+  isInitialSyncComplete: boolean;
 
   // Actions
   createChat: () => string;
@@ -47,6 +48,7 @@ interface ChatState {
   setUserId: (userId: string | null) => void;
   setChats: (chats: Chat[]) => void;
   getChatById: (chatId: string) => Chat | undefined;
+  setInitialSyncComplete: (complete: boolean) => void;
 
   // Getters
   getActiveChat: () => Chat | undefined;
@@ -60,6 +62,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isLoading: false,
   streamingMessageId: null,
   userId: null,
+  isInitialSyncComplete: false,
 
   createChat: () => {
     const id = generateId();
@@ -241,7 +244,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setUserId: (userId) => {
-    set({ userId, chats: [], activeChatId: null });
+    set({ userId, chats: [], activeChatId: null, isInitialSyncComplete: false });
   },
 
   setChats: (chats) => {
@@ -251,6 +254,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   getChatById: (chatId) => {
     const state = get();
     return state.chats.find((chat) => chat.id === chatId);
+  },
+
+  setInitialSyncComplete: (complete) => {
+    set({ isInitialSyncComplete: complete });
   },
 
   getActiveChat: () => {

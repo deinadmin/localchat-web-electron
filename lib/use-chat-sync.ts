@@ -20,7 +20,7 @@ function debounce<T extends (...args: Parameters<T>) => void>(fn: T, delay: numb
 
 export function useChatSync() {
   const { user } = useAuth();
-  const { chats, setUserId, setChats } = useChatStore();
+  const { chats, setUserId, setChats, setInitialSyncComplete } = useChatStore();
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const lastSyncedChatsRef = useRef<Map<string, number>>(new Map());
   const isInitialLoadRef = useRef(true);
@@ -102,6 +102,10 @@ export function useChatSync() {
             lastSyncedChatsRef.current.set(chat.id, chat.updatedAt.getTime());
           });
           
+          // Mark initial sync as complete
+          if (isInitialLoadRef.current) {
+            setInitialSyncComplete(true);
+          }
           isInitialLoadRef.current = false;
         });
       } catch (error) {

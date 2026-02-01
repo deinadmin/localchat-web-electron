@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ChatView } from "@/components/chat-view";
 import { ModelPicker } from "@/components/model-picker";
 import { WindowControls } from "@/components/window-controls";
+import { LoadingOverlay } from "@/components/loading-overlay";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/lib/auth-context";
 import { ThemeProvider } from "@/lib/theme-context";
@@ -96,6 +97,7 @@ export default function Page() {
             <Suspense fallback={null}>
               <MainContent />
             </Suspense>
+            <LoadingOverlay />
           </TooltipProvider>
           <Toaster 
             position="bottom-left" 
@@ -106,9 +108,9 @@ export default function Page() {
               info: <IconInfoCircle className="!size-4 text-blue-500" />,
               loading: <IconLoader2 className="!size-4 text-primary animate-spin" />,
             }}
-            toastOptions={{
-              className: "!bg-background/80 dark:!bg-black/95 !backdrop-blur-xl !border-border/50 !shadow-lg !text-xs !py-2 !px-3 !min-h-0 !gap-1.5 !max-w-[284px] !rounded-xl",
-            }}
+             toastOptions={{
+                className: "!bg-background/50 dark:!bg-black/50 !backdrop-blur-xl !border-border/50 !shadow-lg !text-xs !py-2 !px-3 !min-h-0 !gap-1.5 !max-w-[284px] !rounded-xl !text-foreground",
+              }}
           />
         </AuthProvider>
       </ThemeProvider>

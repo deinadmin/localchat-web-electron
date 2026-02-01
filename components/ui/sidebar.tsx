@@ -74,19 +74,19 @@ function SidebarProvider({
   const [openMobile, setOpenMobile] = React.useState(false)
 
   // Sidebar width state (in pixels)
-  const [width, setWidthState] = React.useState(() => {
-    // Try to get saved width from localStorage
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(SIDEBAR_WIDTH_COOKIE_NAME)
-      if (saved) {
-        const parsed = parseInt(saved, 10)
-        if (!isNaN(parsed) && parsed >= SIDEBAR_MIN_WIDTH && parsed <= SIDEBAR_MAX_WIDTH) {
-          return parsed
-        }
+  // Start with default value to avoid hydration mismatch
+  const [width, setWidthState] = React.useState(256) // Default 16rem = 256px
+
+  // Load saved width from localStorage after hydration
+  React.useEffect(() => {
+    const saved = localStorage.getItem(SIDEBAR_WIDTH_COOKIE_NAME)
+    if (saved) {
+      const parsed = parseInt(saved, 10)
+      if (!isNaN(parsed) && parsed >= SIDEBAR_MIN_WIDTH && parsed <= SIDEBAR_MAX_WIDTH) {
+        setWidthState(parsed)
       }
     }
-    return 256 // Default 16rem = 256px
-  })
+  }, [])
 
   const setWidth = React.useCallback((newWidth: number) => {
     const clampedWidth = Math.min(Math.max(newWidth, SIDEBAR_MIN_WIDTH), SIDEBAR_MAX_WIDTH)
@@ -643,9 +643,9 @@ function SidebarMenuAction({
       data-slot="sidebar-menu-action"
       data-sidebar="menu-action"
       className={cn(
-        "text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:scale-[0.92] peer-hover/menu-button:text-sidebar-accent-foreground absolute top-1.5 right-1 aspect-square w-5 rounded-md p-0 peer-data-[size=default]/menu-button:top-1.5 peer-data-[size=lg]/menu-button:top-2.5 peer-data-[size=sm]/menu-button:top-1 focus-visible:ring-2 [&>svg]:size-4 flex items-center justify-center outline-hidden transition-all duration-150 ease-out group-data-[collapsible=icon]:hidden after:absolute after:-inset-2 md:after:hidden [&>svg]:shrink-0",
+        "text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:scale-[0.92] peer-active/menu-button:scale-[0.98] peer-active/menu-button:-translate-x-[2px] peer-hover/menu-button:text-sidebar-accent-foreground absolute top-1.5 right-1 aspect-square w-5 rounded-md p-0 peer-data-[size=default]/menu-button:top-1.5 peer-data-[size=lg]/menu-button:top-2.5 peer-data-[size=sm]/menu-button:top-1 focus-visible:ring-2 [&>svg]:size-4 flex items-center justify-center outline-hidden transition-all duration-150 ease-out group-data-[collapsible=icon]:hidden after:absolute after:-inset-2 md:after:hidden [&>svg]:shrink-0",
         showOnHover &&
-          "peer-data-active/menu-button:text-sidebar-accent-foreground group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-open:opacity-100 md:opacity-0",
+        "peer-data-active/menu-button:text-sidebar-accent-foreground group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-open:opacity-100 md:opacity-0",
         className
       )}
       {...props}

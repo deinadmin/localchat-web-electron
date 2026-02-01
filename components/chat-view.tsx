@@ -62,7 +62,13 @@ import {
   IconAlertTriangle,
   IconPlayerStopFilled,
   IconInfoCircle,
+  IconCoins,
 } from "@tabler/icons-react";
+import {
+  estimateTokenCount,
+  calculateCost,
+  formatCost,
+} from "@/lib/token-utils";
 import { MessageInfoDialog } from "@/components/message-info-dialog";
 
 // Code block component with copy button and syntax highlighting
@@ -354,6 +360,7 @@ const MessageBubble = memo(function MessageBubble({
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { providers } = useProvidersStore();
+  const { showEstimatedCost } = useLocalSettingsStore();
 
   // Focus search input when dropdown opens
   useEffect(() => {
@@ -380,6 +387,17 @@ const MessageBubble = memo(function MessageBubble({
     }
     return null;
   }, [message.modelId, providers]);
+
+  // Calculate estimated cost for this message
+  const estimatedCost = useMemo(() => {
+    if (!modelInfo?.model?.pricing || !previousMessages) return null;
+    
+    const promptContent = previousMessages.map(m => m.content).join("\n");
+    const promptTokens = estimateTokenCount(promptContent);
+    const completionTokens = estimateTokenCount(message.content);
+    
+    return calculateCost(promptTokens, completionTokens, modelInfo.model.pricing);
+  }, [modelInfo?.model?.pricing, message.content, previousMessages]);
 
   // Get all available models for the dropdown
   const availableModels = useMemo(() => {
@@ -691,6 +709,28 @@ const MessageBubble = memo(function MessageBubble({
                           </DropdownMenu>
                         )}
 
+                        {/* Cost/Context button */}
+                        {modelInfo && estimatedCost !== null && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setShowInfoDialog(true)}
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground rounded-xl active:scale-95 transition-all duration-200"
+                          >
+                            {showEstimatedCost ? (
+                              <>
+                                <IconCoins className="size-3.5 mr-1" />
+                                {formatCost(estimatedCost)}
+                              </>
+                            ) : (
+                              <>
+                                <IconInfoCircle className="size-3.5 mr-1" />
+                                Information
+                              </>
+                            )}
+                          </Button>
+                        )}
+
                         {/* Delete button */}
                         <Button
                           variant="ghost"
@@ -965,7 +1005,7 @@ const FloatingInput = memo(function FloatingInput({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className="text-muted-foreground hover:text-foreground rounded-xl"
+                  className="text-muted-foreground hover:text-foreground rounded-xl active:scale-95 transition-all duration-200"
                 >
                   <IconDots className="size-4" />
                 </Button>
@@ -1013,7 +1053,7 @@ export function ChatView() {
 
   const { user } = useAuth();
   const { setIsScrolled } = useScroll();
-  const { fullWidthChat } = useLocalSettingsStore();
+  const { fullWidthChat, showEstimatedCost } = useLocalSettingsStore();
 
   // Use separate selectors for better performance - only subscribe to what we need
   const activeChatId = useChatStore((state) => state.activeChatId);
@@ -1059,7 +1099,11 @@ export function ChatView() {
   // Track scroll position for header border
   useEffect(() => {
     const scrollElement = scrollRef.current;
-    if (!scrollElement) return;
+    if (!scrollElement) {
+      // No scroll element means we're in empty state - reset scroll state
+      setIsScrolled(false);
+      return;
+    }
 
     const handleScroll = () => {
       setIsScrolled(scrollElement.scrollTop > 0);
@@ -1196,8 +1240,6 @@ export function ChatView() {
   }, []);
 
   if (!activeChatId) {
-    // Reset scroll state for empty state (no scrollable content)
-    setIsScrolled(false);
     return (
       <div className="relative flex flex-1 flex-col bg-background overflow-hidden">
         <EmptyState />

@@ -20,8 +20,7 @@ import {
   formatTokenCount,
 } from "@/lib/token-utils";
 import {
-  IconUser,
-  IconRobot,
+  IconInfoCircle,
   IconClock,
   IconCoins,
   IconHash,
@@ -119,12 +118,8 @@ export function MessageInfoDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {isUser ? (
-              <IconUser className="size-5" />
-            ) : (
-              <IconRobot className="size-5" />
-            )}
-            {isUser ? "User Message" : "Assistant Message"}
+            <IconInfoCircle className="size-5" />
+            Information
           </DialogTitle>
           <DialogDescription>
             Details about this message including tokens and estimated cost.
