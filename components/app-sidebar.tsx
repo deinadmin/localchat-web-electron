@@ -125,6 +125,19 @@ export function AppSidebar() {
   const [deleteChatId, setDeleteChatId] = useState<string | null>(null);
   const [deleteProviderId, setDeleteProviderId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+  const stickyHeaderRef = useRef<HTMLDivElement>(null);
+  const [sidebarScrolled, setSidebarScrolled] = useState(false);
+
+  // Track sidebar content scroll for sticky header shadow
+  useEffect(() => {
+    const scrollEl = stickyHeaderRef.current?.parentElement;
+    if (!scrollEl) return;
+    const handleScroll = () =>
+      setSidebarScrolled((scrollEl as HTMLElement).scrollTop > 0);
+    handleScroll();
+    scrollEl.addEventListener("scroll", handleScroll, { passive: true });
+    return () => scrollEl.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // Focus the edit input when editingChatId changes
   useEffect(() => {
@@ -376,7 +389,7 @@ export function AppSidebar() {
                 size="lg"
                 onClick={handleHeaderClick}
                 tooltip={user ? "Settings" : "Sign In with Google"}
-                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground mb-1"
                 style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
               >
                 {loading ? (
@@ -434,47 +447,53 @@ export function AppSidebar() {
         </SidebarHeader>
 
         <SidebarContent onContextMenu={(e) => e.preventDefault()}>
-          <SidebarGroup className="px-2 py-0">
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {/* New Chat Button */}
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={handleNewChat}
-                    tooltip="New Chat"
-                    className={"bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground mb-1"}
-                  >
-                    <IconPlus className="size-4" />
-                    <span>New Chat</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          {/* Sticky: New Chat + Search Chats */}
+          <div
+            ref={stickyHeaderRef}
+            className={`sticky top-0 z-10 shrink-0 bg-sidebar pb-1 transition-shadow duration-200 ${sidebarScrolled ? "shadow-[0_4px_6px_-2px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_6px_-2px_rgba(0,0,0,0.25)]" : ""}`}
+          >
+            <SidebarGroup className="px-2 py-0">
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {/* New Chat Button */}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      onClick={handleNewChat}
+                      tooltip="New Chat"
+                      className={"bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground mb-2"}
+                    >
+                      <IconPlus className="size-4" />
+                      <span>New Chat</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
 
-          <SidebarGroup className="px-2 py-0">
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {/* Search Button */}
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={() => setSearchOpen(true)}
-                    tooltip="Search Chats (⌘K)"
-                    className="text-muted-foreground hover:text-foreground mb-1"
-                  >
-                    <IconSearch className="size-4" />
-                    <span className="flex-1">Search Chats</span>
-                    {!isCollapsed && (
-                      <KbdGroup>
-                        <Kbd>⌘</Kbd>
-                        <Kbd>K</Kbd>
-                      </KbdGroup>
-                    )}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+            <SidebarGroup className="px-2 py-0">
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {/* Search Button */}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      onClick={() => setSearchOpen(true)}
+                      tooltip="Search Chats (⌘K)"
+                      className="text-muted-foreground hover:text-foreground mb-1"
+                    >
+                      <IconSearch className="size-4" />
+                      <span className="flex-1">Search Chats</span>
+                      {!isCollapsed && (
+                        <KbdGroup>
+                          <Kbd>⌘</Kbd>
+                          <Kbd>K</Kbd>
+                        </KbdGroup>
+                      )}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </div>
 
           {/* Chat List */}
           <SidebarGroup className="group-data-[collapsible=icon]:hidden flex-1 px-2 py-0" onContextMenu={(e) => e.stopPropagation()}>
