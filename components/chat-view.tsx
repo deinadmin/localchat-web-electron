@@ -8,6 +8,8 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
 } from "@/components/ui/context-menu";
 import {
   AlertDialog,
@@ -52,6 +54,8 @@ import {
   IconPhoto,
   IconDots,
   IconCopy,
+  IconCut,
+  IconClipboard,
   IconCheck,
   IconRefresh,
   IconTrash,
@@ -70,6 +74,48 @@ import {
   formatCost,
 } from "@/lib/token-utils";
 import { MessageInfoDialog } from "@/components/message-info-dialog";
+
+// Wrapper that runs fade-in-up animation on mount (Web Animations API so it always runs)
+const MessageEnterWrapper = memo(function MessageEnterWrapper({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const anim = el.animate(
+      [
+        { opacity: 0, transform: "translateY(16px)" },
+        { opacity: 1, transform: "translateY(0)" },
+      ],
+      {
+        duration: 400,
+        easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+        fill: "forwards",
+      }
+    );
+    // Clear inline style after animation so it doesn't override final state
+    anim.finished.then(() => {
+      el.style.opacity = "";
+      el.style.transform = "";
+    });
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{ opacity: 0, transform: "translateY(16px)" }}
+    >
+      {children}
+    </div>
+  );
+});
 
 // Code block component with copy button and syntax highlighting
 const CodeBlock = memo(function CodeBlock({ children, className, ...props }: { children?: ReactNode; className?: string }) {
@@ -919,6 +965,66 @@ const FloatingInput = memo(function FloatingInput({
     }
   };
 
+  const handleCut = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const { value, selectionStart, selectionEnd } = ta;
+    const selected = value.slice(selectionStart, selectionEnd);
+    if (selected) {
+      void navigator.clipboard.writeText(selected);
+      setInput(value.slice(0, selectionStart) + value.slice(selectionEnd));
+      ta.selectionStart = ta.selectionEnd = selectionStart;
+    }
+  }, []);
+  const handleCopy = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const selected = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    if (selected) void navigator.clipboard.writeText(selected);
+  }, []);
+  const handlePaste = useCallback(() => {
+    void navigator.clipboard.readText().then((text) => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      const { value, selectionStart, selectionEnd } = ta;
+      const newValue = value.slice(0, selectionStart) + text + value.slice(selectionEnd);
+      setInput(newValue);
+      const newPos = selectionStart + text.length;
+      ta.selectionStart = ta.selectionEnd = newPos;
+    });
+  }, []);
+  const savedSelectionRef = useRef<{ start: number; end: number } | null>(null);
+  const [contextMenuSelection, setContextMenuSelection] = useState<{ start: number; end: number } | null>(null);
+
+  const handlePromptContextMenu = useCallback(() => {
+    const ta = textareaRef.current;
+    if (ta) {
+      const sel = { start: ta.selectionStart, end: ta.selectionEnd };
+      savedSelectionRef.current = sel;
+      setContextMenuSelection(sel);
+    }
+  }, []);
+
+  const handleContextMenuOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      const ta = textareaRef.current;
+      const saved = savedSelectionRef.current;
+      if (ta && saved) {
+        ta.focus();
+        ta.selectionStart = saved.start;
+        ta.selectionEnd = saved.end;
+      }
+      savedSelectionRef.current = null;
+      setContextMenuSelection(null);
+    }
+  }, []);
+
+  const hasSelection = contextMenuSelection != null && contextMenuSelection.start < contextMenuSelection.end;
+
+  const handlePromptRightMouseDown = useCallback((e: React.MouseEvent<HTMLTextAreaElement>) => {
+    if (e.button === 2) e.preventDefault();
+  }, []);
+
   return (
     <div
       className="fixed bottom-0 right-0 z-50 pb-4 sm:pb-6 px-2 sm:px-4 pointer-events-none transition-[left] duration-200 ease-linear"
@@ -934,18 +1040,40 @@ const FloatingInput = memo(function FloatingInput({
         className={`mx-auto pointer-events-auto ${fullWidth ? "px-2" : "max-w-3xl"}`}
       >
         <div className="rounded-2xl border border-border bg-background/80 backdrop-blur-xl shadow-lg">
-          {/* Input Row */}
-          <div className="p-3">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask anything"
-              rows={1}
-              className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground resize-none leading-5 max-h-40 overflow-y-auto"
-            />
-          </div>
+          {/* Input Row with context menu for copy/cut/paste */}
+          <ContextMenu onOpenChange={handleContextMenuOpenChange}>
+            <ContextMenuTrigger asChild>
+              <div className="p-3" onContextMenu={handlePromptContextMenu}>
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onMouseDown={handlePromptRightMouseDown}
+                  placeholder="Ask anything"
+                  rows={1}
+                  className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground resize-none leading-5 max-h-40 overflow-y-auto"
+                />
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem onClick={handleCut} disabled={!hasSelection}>
+                <IconCut className="size-4" />
+                Cut
+                <ContextMenuShortcut>⌘X</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem onClick={handleCopy} disabled={!hasSelection}>
+                <IconCopy className="size-4" />
+                Copy
+                <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem onClick={handlePaste}>
+                <IconClipboard className="size-4" />
+                Paste
+                <ContextMenuShortcut>⌘V</ContextMenuShortcut>
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
 
           {/* Actions Row */}
           <div className="flex items-center justify-between px-2 pb-2">
@@ -1050,6 +1178,8 @@ export function ChatView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  /** Message IDs present when this chat was opened; only animate user messages not in this set (i.e. sent this session) */
+  const initialMessageIdsRef = useRef<Set<string>>(new Set());
 
   const { user } = useAuth();
   const { setIsScrolled } = useScroll();
@@ -1096,6 +1226,13 @@ export function ChatView() {
   useEffect(() => {
     textareaRef.current?.focus();
   }, [activeChatId]);
+
+  // Snapshot message IDs when opening a chat so we only animate messages sent after open (not on load/hot reload)
+  useEffect(() => {
+    if (activeChatId && activeChat) {
+      initialMessageIdsRef.current = new Set(activeChat.messages.map((m) => m.id));
+    }
+  }, [activeChatId]); // intentionally not activeChat.messages — only reset when switching chats
 
   // Track scroll position for header border
   useEffect(() => {
@@ -1155,7 +1292,17 @@ export function ChatView() {
     // Add user message
     addMessage(chatId, { role: "user", content: userMessage });
 
-    // Get API key from Firestore
+    // Create placeholder and show loading dots immediately (before async API key fetch)
+    const assistantMessageId = Math.random().toString(36).substring(2, 15);
+    const isAutoRouter = selectedModel.modelId === "openrouter/auto";
+    addMessageWithId(chatId, {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "",
+      modelId: selectedModel.modelId,
+      ...(isAutoRouter && { requestedModelId: selectedModel.modelId }),
+    });
+    setStreamingMessageId(assistantMessageId);
     setLoading(true);
 
     try {
@@ -1164,6 +1311,7 @@ export function ChatView() {
       if (!apiKey) {
         toast.error("API key not found. Please reconfigure your provider.");
         setLoading(false);
+        setStreamingMessageId(null);
         return;
       }
 
@@ -1174,19 +1322,6 @@ export function ChatView() {
           role: m.role,
           content: m.content,
         })) || [];
-
-      // Create a placeholder assistant message for streaming
-      const assistantMessageId = Math.random().toString(36).substring(2, 15);
-      const isAutoRouter = selectedModel.modelId === "openrouter/auto";
-      addMessageWithId(chatId, {
-        id: assistantMessageId,
-        role: "assistant",
-        content: "",
-        modelId: selectedModel.modelId,
-        // If using autorouter, store it as requestedModelId so it shows as recently used
-        ...(isAutoRouter && { requestedModelId: selectedModel.modelId }),
-      });
-      setStreamingMessageId(assistantMessageId);
 
       // Create abort controller for cancellation
       abortControllerRef.current = new AbortController();
@@ -1286,9 +1421,18 @@ export function ChatView() {
               </p>
             </div>
           ) : (
-            activeChat?.messages.map((message, index) => (
-              <MessageBubble
-                key={message.id}
+            activeChat?.messages.map((message, index) => {
+              const isNewest = index === (activeChat?.messages.length ?? 0) - 1;
+              const wasJustSent =
+                message.role === "user" && !initialMessageIdsRef.current.has(message.id);
+              const isStreamingPlaceholder =
+                isNewest &&
+                message.role === "assistant" &&
+                streamingMessageId === message.id &&
+                !message.content;
+              const shouldAnimateIn = wasJustSent || isStreamingPlaceholder;
+              const bubble = (
+                <MessageBubble
                 message={message}
                 isStreaming={streamingMessageId === message.id}
                 isEditing={editingMessageId === message.id}
@@ -1435,7 +1579,13 @@ export function ChatView() {
                 }}
                 previousMessages={activeChat?.messages.slice(0, index)}
               />
-            ))
+              );
+              return shouldAnimateIn ? (
+                <MessageEnterWrapper key={message.id}>{bubble}</MessageEnterWrapper>
+              ) : (
+                <div key={message.id}>{bubble}</div>
+              );
+            })
           )}
         </div>
       </div>
