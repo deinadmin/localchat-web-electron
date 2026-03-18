@@ -20,6 +20,23 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Firestore Security Rules
+
+This app stores user data under these Firestore paths:
+
+- `users/{uid}/chats/{chatId}`
+- `users/{uid}/providers/{providerId}`
+
+The project-local Firestore rules live in `firestore.rules` and are wired through `firebase.json`.
+
+To deploy the rules with the Firebase CLI:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+Important security note: provider API keys are currently encrypted on the client with a bundled key in `lib/encryption.ts`. These Firestore rules protect users from each other, but they do not make provider keys truly secret from the signed-in user. For production-grade secret handling, move provider key storage and model calls to a trusted server.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

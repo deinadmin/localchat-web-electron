@@ -1,0 +1,123 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isNonEmptyString(value, maxLength) {
+      return value is string && value.size() > 0 && value.size() <= maxLength;
+    }
+
+    function isOptionalBool(data, field) {
+      return !(field in data) || data[field] is bool;
+    }
+
+    function isTimestampMillis(value) {
+      return value is int
+        && value >= 0
+        && value <= 4102444800000;
+    }
+
+    function isValidChat(chatId) {
+      let data = request.resource.data;
+
+      return data.keys().hasAll([
+          "id",
+          "title",
+          "messages",
+          "createdAt",
+          "updatedAt"
+        ])
+        && data.keys().hasOnly([
+          "id",
+          "title",
+          "messages",
+          "createdAt",
+          "updatedAt",
+          "pinned"
+        ])
+        && data.id == chatId
+        && isNonEmptyString(data.title, 120)
+        && data.messages is list
+        && data.messages.size() <= 400
+        && isTimestampMillis(data.createdAt)
+        && isTimestampMillis(data.updatedAt)
+        && data.createdAt <= data.updatedAt
+        && isOptionalBool(data, "pinned");
+    }
+
+    function isValidProvider(providerId) {
+      let data = request.resource.data;
+
+      return data.keys().hasAll([
+          "id",
+          "type",
+          "name",
+          "encryptedApiKey",
+          "verified",
+          "createdAt"
+        ])
+        && data.keys().hasOnly([
+          "id",
+          "type",
+          "name",
+          "encryptedApiKey",
+          "verified",
+          "createdAt"
+        ])
+        && data.id == providerId
+        && (
+          data.type == "openrouter" ||
+          data.type == "anthropic" ||
+          data.type == "openai" ||
+          data.type == "perplexity"
+        )
+        && isNonEmptyString(data.name, 80)
+        && isNonEmptyString(data.encryptedApiKey, 4096)
+        && data.verified is bool
+        && isTimestampMillis(data.createdAt);
+    }
+
+    match /users/{userId} {
+      allow read, write: if false;
+
+      match /chats/{chatId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && isValidChat(chatId);
+
+        allow update: if isOwner(userId)
+          && isValidChat(chatId)
+          && resource.data.id == request.resource.data.id
+          && resource.data.createdAt == request.resource.data.createdAt;
+
+        allow delete: if isOwner(userId);
+      }
+
+      match /providers/{providerId} {
+        allow get, list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && isValidProvider(providerId);
+
+        allow update: if isOwner(userId)
+          && isValidProvider(providerId)
+          && resource.data.id == request.resource.data.id
+          && resource.data.type == request.resource.data.type;
+
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

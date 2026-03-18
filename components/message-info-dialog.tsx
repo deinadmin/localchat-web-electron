@@ -158,6 +158,12 @@ export function MessageInfoDialog({
                 <p className="text-xs text-muted-foreground/70 font-mono truncate">
                   {model.id}
                 </p>
+                {/* Show that this was routed via Auto Router */}
+                {message.requestedModelId === "openrouter/auto" && (
+                  <p className="text-xs text-muted-foreground/70 mt-1">
+                    via <span className="font-medium">Auto Router</span>
+                  </p>
+                )}
               </div>
             </div>
           )}

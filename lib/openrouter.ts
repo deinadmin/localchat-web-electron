@@ -80,6 +80,7 @@ export interface StreamChatParams {
   onChunk: (content: string) => void;
   onDone: () => void;
   onError: (error: Error) => void;
+  onModel?: (model: string) => void; // Called when the actual model is known (useful for routers)
   signal?: AbortSignal;
 }
 
@@ -90,6 +91,7 @@ export async function streamChat({
   onChunk,
   onDone,
   onError,
+  onModel,
   signal,
 }: StreamChatParams): Promise<void> {
   try {
@@ -121,6 +123,7 @@ export async function streamChat({
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let modelReported = false;
 
     try {
       while (true) {
@@ -153,6 +156,12 @@ export async function streamChat({
               // Check for errors
               if (parsed.error) {
                 throw new Error(parsed.error.message || "Stream error");
+              }
+
+              // Report the actual model used (from the first chunk that has it)
+              if (!modelReported && parsed.model && onModel) {
+                onModel(parsed.model);
+                modelReported = true;
               }
 
               const content = parsed.choices?.[0]?.delta?.content;

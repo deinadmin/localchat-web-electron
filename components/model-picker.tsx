@@ -4,27 +4,20 @@ import { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import { ModelPickerModal } from "@/components/model-picker-modal";
 import { useProvidersStore, shouldRefreshModels } from "@/lib/providers-store";
 import { useAuth } from "@/lib/auth-context";
-import { fetchModels, POPULAR_MODELS } from "@/lib/openrouter";
+import { fetchModels } from "@/lib/openrouter";
 import { getProviderApiKey } from "@/lib/firestore-providers";
-import { getRecentModelIds } from "@/lib/firestore-chats";
 import {
   IconChevronDown,
   IconSparkles,
-  IconSearch,
   IconCpu,
-  IconList,
-  IconCheck,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
 
@@ -122,13 +115,21 @@ export function parseModelName(modelId: string, modelName: string): { provider: 
 }
 
 // Provider icon component
-export function ProviderIcon({ provider, className = "size-4" }: { provider: ModelProvider; className?: string }) {
+export function ProviderIcon({ provider, className = "size-4", inverted = false }: { provider: ModelProvider; className?: string; inverted?: boolean }) {
   if (provider === "unknown") {
     return <IconCpu className={`${className} select-none`} />;
   }
   
   const icon = PROVIDER_ICONS[provider];
-  const needsInvert = (NON_COLOR_ICONS as readonly string[]).includes(provider);
+  const isMonochrome = (NON_COLOR_ICONS as readonly string[]).includes(provider);
+  
+  // Only monochrome (black) icons need inversion handling
+  // - Normal state: invert in dark mode so black icons become white
+  // - Inverted state (selected chip): invert in light mode so black icons become white on black bg
+  let invertClass = "";
+  if (isMonochrome) {
+    invertClass = inverted ? " invert dark:invert-0" : " dark:invert";
+  }
   
   return (
     <Image
@@ -136,53 +137,22 @@ export function ProviderIcon({ provider, className = "size-4" }: { provider: Mod
       alt={icon.alt}
       width={24}
       height={24}
-      className={`${className}${needsInvert ? " dark:invert" : ""} select-none pointer-events-none`}
+      className={`${className}${invertClass} select-none pointer-events-none`}
       draggable={false}
     />
   );
 }
 
 export function ModelPicker({ onOpenSettings }: { onOpenSettings?: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const [showAllModels, setShowAllModels] = useState(false);
-  const [recentModelIds, setRecentModelIds] = useState<string[]>([]);
 
   const { user } = useAuth();
   const {
     providers,
     selectedModel,
-    setSelectedModel,
     updateProvider,
-    getActiveProvider,
-    getActiveModel,
   } = useProvidersStore();
-
-  const activeProvider = getActiveProvider();
-  const activeModel = getActiveModel();
-
-  // Fetch recent models from Firestore
-  useEffect(() => {
-    async function fetchRecentModels() {
-      if (!user) return;
-      try {
-        const recentIds = await getRecentModelIds(user.uid, 5);
-        setRecentModelIds(recentIds);
-      } catch (error) {
-        console.error("Failed to fetch recent models:", error);
-      }
-    }
-    fetchRecentModels();
-  }, [user]);
-
-  // Reset showAllModels when dropdown closes
-  useEffect(() => {
-    if (!open) {
-      setShowAllModels(false);
-      setSearch("");
-    }
-  }, [open]);
 
   // Refresh models if cache is stale or models are missing
   useEffect(() => {
@@ -190,7 +160,6 @@ export function ModelPicker({ onOpenSettings }: { onOpenSettings?: () => void })
       if (!user) return;
 
       for (const provider of providers) {
-        // Check if models are missing or stale
         const needsRefresh = !provider.models || provider.models.length === 0 || shouldRefreshModels(provider);
         
         if (provider.type === "openrouter" && needsRefresh) {
@@ -217,17 +186,31 @@ export function ModelPicker({ onOpenSettings }: { onOpenSettings?: () => void })
     refreshModels();
   }, [user, providers.length, updateProvider]);
 
+  // Global keyboard shortcut for model picker (Cmd/Ctrl + Shift + M)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === "m" &&
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey
+      ) {
+        event.preventDefault();
+        setModalOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   // Get all available models from all providers
   const allModels = useMemo(() => {
     const models: Array<{
       providerId: string;
-      providerName: string;
       modelId: string;
       modelName: string;
       cleanName: string;
       modelProvider: ModelProvider;
-      isPopular: boolean;
-      isRecent: boolean;
     }> = [];
 
     for (const provider of providers) {
@@ -236,39 +219,19 @@ export function ModelPicker({ onOpenSettings }: { onOpenSettings?: () => void })
           const { provider: modelProvider, cleanName } = parseModelName(model.id, model.name);
           models.push({
             providerId: provider.id,
-            providerName: provider.name,
             modelId: model.id,
             modelName: model.name,
             cleanName,
             modelProvider,
-            isPopular: POPULAR_MODELS.includes(model.id),
-            isRecent: recentModelIds.includes(model.id),
           });
         }
       }
     }
 
     return models;
-  }, [providers, recentModelIds]);
+  }, [providers]);
 
-  // Filter models based on search
-  const filteredModels = useMemo(() => {
-    if (!search.trim()) return allModels;
-    const searchLower = search.toLowerCase();
-    return allModels.filter(
-      (m) =>
-        m.modelId.toLowerCase().includes(searchLower) ||
-        m.modelName.toLowerCase().includes(searchLower) ||
-        m.cleanName.toLowerCase().includes(searchLower)
-    );
-  }, [allModels, search]);
-
-  // Separate recent, popular, and other models
-  const recentModels = filteredModels.filter((m) => m.isRecent);
-  const popularModels = filteredModels.filter((m) => m.isPopular && !m.isRecent);
-  const otherModels = filteredModels.filter((m) => !m.isPopular && !m.isRecent);
-
-  // Get display info for current model - MUST be before any early returns
+  // Get display info for current model
   const currentModelInfo = useMemo(() => {
     if (!selectedModel) return null;
     const model = allModels.find(
@@ -280,12 +243,6 @@ export function ModelPicker({ onOpenSettings }: { onOpenSettings?: () => void })
     const { provider, cleanName } = parseModelName(selectedModel.modelId, selectedModel.modelId);
     return { modelProvider: provider, cleanName, modelName: selectedModel.modelId };
   }, [selectedModel, allModels]);
-
-  const handleSelectModel = (providerId: string, modelId: string) => {
-    setSelectedModel(providerId, modelId);
-    setOpen(false);
-    setSearch("");
-  };
 
   // No providers configured
   if (providers.length === 0) {
@@ -320,157 +277,35 @@ export function ModelPicker({ onOpenSettings }: { onOpenSettings?: () => void })
     : displayName;
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-2 max-w-[220px]">
-          {currentModelInfo ? (
-            <ProviderIcon provider={currentModelInfo.modelProvider} className="size-4 shrink-0" />
-          ) : (
-            <IconSparkles className="size-4 shrink-0" />
-          )}
-          <span className="truncate">{shortDisplayName}</span>
-          <IconChevronDown className="size-3 shrink-0 opacity-50" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-80">
-        {/* Search - only show when showing all models */}
-        {showAllModels && (
-          <>
-            <div className="p-2">
-              <div className="relative">
-                <IconSearch className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search models..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-8 h-8"
-                />
-              </div>
-            </div>
-            <DropdownMenuSeparator />
-          </>
-        )}
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-2 max-w-[220px]"
+            onClick={() => setModalOpen(true)}
+          >
+            {currentModelInfo ? (
+              <ProviderIcon provider={currentModelInfo.modelProvider} className="size-4 shrink-0" />
+            ) : (
+              <IconSparkles className="size-4 shrink-0" />
+            )}
+            <span className="truncate">{shortDisplayName}</span>
+            <IconChevronDown className="size-3 shrink-0 opacity-50" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="flex items-center gap-2">
+          Select Model
+          <KbdGroup>
+            <Kbd>⌘</Kbd>
+            <Kbd>⇧</Kbd>
+            <Kbd>M</Kbd>
+          </KbdGroup>
+        </TooltipContent>
+      </Tooltip>
 
-        <ScrollArea className="h-[300px] [&>div>div]:!block [&_[data-radix-scroll-area-scrollbar]]:hidden">
-          {/* Recent Models */}
-          {recentModels.length > 0 && !showAllModels && (
-            <>
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Recent
-              </DropdownMenuLabel>
-              {recentModels.map((model) => {
-                const isSelected = selectedModel?.modelId === model.modelId && selectedModel?.providerId === model.providerId;
-                return (
-                  <DropdownMenuItem
-                    key={`recent-${model.providerId}-${model.modelId}`}
-                    onClick={() => handleSelectModel(model.providerId, model.modelId)}
-                    className="flex items-center gap-2 py-2"
-                  >
-                    <ProviderIcon provider={model.modelProvider} className="size-6 shrink-0" />
-                    <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                      <span className="font-medium text-sm truncate">{model.cleanName}</span>
-                      <span className="text-xs text-muted-foreground truncate">
-                        {model.modelId}
-                      </span>
-                    </div>
-                    {isSelected && <IconCheck className="size-4 shrink-0 text-primary" />}
-                    <Image src="/openrouter.svg" alt="OpenRouter" width={16} height={16} className="size-4 shrink-0 opacity-50 mr-1 dark:invert" />
-                  </DropdownMenuItem>
-                );
-              })}
-              <DropdownMenuSeparator />
-            </>
-          )}
-
-          {/* Popular Models */}
-          {popularModels.length > 0 && !showAllModels && (
-            <>
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Popular
-              </DropdownMenuLabel>
-              {popularModels.map((model) => {
-                const isSelected = selectedModel?.modelId === model.modelId && selectedModel?.providerId === model.providerId;
-                return (
-                  <DropdownMenuItem
-                    key={`popular-${model.providerId}-${model.modelId}`}
-                    onClick={() => handleSelectModel(model.providerId, model.modelId)}
-                    className="flex items-center gap-2 py-2"
-                  >
-                    <ProviderIcon provider={model.modelProvider} className="size-6 shrink-0" />
-                    <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                      <span className="font-medium text-sm truncate">{model.cleanName}</span>
-                      <span className="text-xs text-muted-foreground truncate">
-                        {model.modelId}
-                      </span>
-                    </div>
-                    {isSelected && <IconCheck className="size-4 shrink-0 text-primary" />}
-                    <Image src="/openrouter.svg" alt="OpenRouter" width={16} height={16} className="size-4 shrink-0 opacity-50 mr-1 dark:invert" />
-                  </DropdownMenuItem>
-                );
-              })}
-            </>
-          )}
-
-          {/* All Models - only when showAllModels is true */}
-          {showAllModels && (
-            <>
-              {filteredModels.length > 0 ? (
-                <>
-                  <DropdownMenuLabel className="text-xs text-muted-foreground">
-                    All Models
-                  </DropdownMenuLabel>
-                  {filteredModels.map((model) => {
-                    const isSelected = selectedModel?.modelId === model.modelId && selectedModel?.providerId === model.providerId;
-                    return (
-                      <DropdownMenuItem
-                        key={`all-${model.providerId}-${model.modelId}`}
-                        onClick={() => handleSelectModel(model.providerId, model.modelId)}
-                        className="flex items-center gap-2 py-2"
-                      >
-                        <ProviderIcon provider={model.modelProvider} className="size-6 shrink-0" />
-                        <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                          <span className="font-medium text-sm truncate">{model.cleanName}</span>
-                          <span className="text-xs text-muted-foreground truncate">
-                            {model.modelId}
-                          </span>
-                        </div>
-                        <Image src="/openrouter.svg" alt="OpenRouter" width={16} height={16} className="size-4 shrink-0 opacity-50 dark:invert" />
-                        {isSelected && <IconCheck className="size-4 shrink-0 text-primary" />}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </>
-              ) : (
-                <p className="px-2 py-4 text-sm text-muted-foreground text-center">
-                  No models found
-                </p>
-              )}
-            </>
-          )}
-        </ScrollArea>
-
-        {/* Show all models button - floating at bottom */}
-        {!showAllModels && (
-          <>
-            <DropdownMenuSeparator />
-            <div className="p-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full gap-2"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setShowAllModels(true);
-                }}
-              >
-                <IconList className="size-4" />
-                Show all models
-              </Button>
-            </div>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      <ModelPickerModal open={modalOpen} onOpenChange={setModalOpen} />
+    </>
   );
 }

@@ -8,6 +8,7 @@ export interface Message {
   content: string;
   timestamp: Date;
   modelId?: string; // The model used to generate this message (for assistant messages)
+  requestedModelId?: string; // The model that was requested (e.g., openrouter/auto when actual modelId differs)
   error?: string; // Error message if generation failed
 }
 
@@ -35,6 +36,7 @@ interface ChatState {
   addMessage: (chatId: string, message: Omit<Message, "id" | "timestamp">) => void;
   addMessageWithId: (chatId: string, message: Omit<Message, "timestamp"> & { id: string }) => void;
   updateMessageContent: (chatId: string, messageId: string, content: string) => void;
+  updateMessageModel: (chatId: string, messageId: string, modelId: string) => void;
   setMessageError: (chatId: string, messageId: string, error: string) => void;
   clearMessageError: (chatId: string, messageId: string) => void;
   appendToMessage: (chatId: string, messageId: string, chunk: string) => void;
@@ -154,6 +156,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...chat,
           messages: chat.messages.map((msg) =>
             msg.id === messageId ? { ...msg, content } : msg
+          ),
+          updatedAt: new Date(),
+        };
+      }),
+    }));
+  },
+
+  updateMessageModel: (chatId, messageId, modelId) => {
+    set((state) => ({
+      chats: state.chats.map((chat) => {
+        if (chat.id !== chatId) return chat;
+        return {
+          ...chat,
+          messages: chat.messages.map((msg) =>
+            msg.id === messageId ? { ...msg, modelId } : msg
           ),
           updatedAt: new Date(),
         };

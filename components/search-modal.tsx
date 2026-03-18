@@ -7,6 +7,7 @@ import { useProvidersStore } from "@/lib/providers-store";
 import { parseModelName } from "@/components/model-picker";
 import { IconSearch, IconMessage, IconPin } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
+import { Kbd } from "@/components/ui/kbd";
 import { VisuallyHidden } from "radix-ui";
 
 interface SearchModalProps {
@@ -128,9 +129,10 @@ export function SearchModal({ open, onOpenChange }: SearchModalProps) {
   // Scroll selected item into view
   useEffect(() => {
     if (listRef.current && filteredChats.length > 0) {
-      const selectedElement = listRef.current.children[selectedIndex] as HTMLElement;
+      const innerContainer = listRef.current.querySelector('div.py-2');
+      const selectedElement = innerContainer?.children[selectedIndex] as HTMLElement;
       if (selectedElement) {
-        selectedElement.scrollIntoView({ block: "nearest" });
+        selectedElement.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
     }
   }, [selectedIndex, filteredChats.length]);
@@ -228,8 +230,8 @@ export function SearchModal({ open, onOpenChange }: SearchModalProps) {
                     className={cn(
                       "w-full px-4 py-3 flex items-start gap-3 text-left transition-colors",
                       index === selectedIndex
-                        ? "bg-accent"
-                        : "hover:bg-accent/50"
+                        ? "bg-muted"
+                        : "hover:bg-muted/50"
                     )}
                   >
                     {/* Icon */}
@@ -270,15 +272,15 @@ export function SearchModal({ open, onOpenChange }: SearchModalProps) {
         {filteredChats.length > 0 && (
           <div className="border-t px-4 py-2 text-xs text-muted-foreground flex items-center gap-4">
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 rounded bg-muted font-mono text-[10px]">↑↓</kbd>
+              <Kbd>↑↓</Kbd>
               navigate
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 rounded bg-muted font-mono text-[10px]">↵</kbd>
+              <Kbd>↵</Kbd>
               open
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 rounded bg-muted font-mono text-[10px]">esc</kbd>
+              <Kbd>esc</Kbd>
               close
             </span>
           </div>

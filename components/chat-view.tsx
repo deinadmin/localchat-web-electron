@@ -1073,6 +1073,7 @@ export function ChatView() {
     appendToMessage,
     deleteMessage,
     updateMessageContent,
+    updateMessageModel,
     setMessageError,
     setLoading,
     setStreamingMessageId,
@@ -1176,11 +1177,14 @@ export function ChatView() {
 
       // Create a placeholder assistant message for streaming
       const assistantMessageId = Math.random().toString(36).substring(2, 15);
+      const isAutoRouter = selectedModel.modelId === "openrouter/auto";
       addMessageWithId(chatId, {
         id: assistantMessageId,
         role: "assistant",
         content: "",
         modelId: selectedModel.modelId,
+        // If using autorouter, store it as requestedModelId so it shows as recently used
+        ...(isAutoRouter && { requestedModelId: selectedModel.modelId }),
       });
       setStreamingMessageId(assistantMessageId);
 
@@ -1194,6 +1198,12 @@ export function ChatView() {
         apiKey,
         onChunk: (chunk) => {
           appendToMessage(chatId!, assistantMessageId, chunk);
+        },
+        onModel: (actualModel) => {
+          // When using a router, update the message with the actual model used
+          if (isAutoRouter && actualModel !== selectedModel.modelId) {
+            updateMessageModel(chatId!, assistantMessageId, actualModel);
+          }
         },
         onDone: () => {
           setStreamingMessageId(null);
@@ -1371,11 +1381,14 @@ export function ChatView() {
 
                     // Create new assistant message
                     const newAssistantMessageId = crypto.randomUUID();
+                    const isAutoRouter = modelId === "openrouter/auto";
                     addMessageWithId(activeChatId, {
                       id: newAssistantMessageId,
                       role: "assistant",
                       content: "",
                       modelId,
+                      // If using autorouter, store it as requestedModelId so it shows as recently used
+                      ...(isAutoRouter && { requestedModelId: modelId }),
                     });
 
                     setLoading(true);
@@ -1394,6 +1407,12 @@ export function ChatView() {
                         apiKey,
                         onChunk: (content: string) => {
                           appendToMessage(activeChatId, newAssistantMessageId, content);
+                        },
+                        onModel: (actualModel: string) => {
+                          // When using a router, update the message with the actual model used
+                          if (isAutoRouter && actualModel !== modelId) {
+                            updateMessageModel(activeChatId, newAssistantMessageId, actualModel);
+                          }
                         },
                         onDone: () => {
                           setStreamingMessageId(null);

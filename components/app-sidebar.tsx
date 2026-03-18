@@ -48,6 +48,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { WindowControls } from "@/components/window-controls";
 import { useChatStore } from "@/lib/chat-store";
 import { useAuth } from "@/lib/auth-context";
@@ -464,9 +465,10 @@ export function AppSidebar() {
                     <IconSearch className="size-4" />
                     <span className="flex-1">Search Chats</span>
                     {!isCollapsed && (
-                      <kbd className="hidden sm:inline-flex px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground">
-                        ⌘K
-                      </kbd>
+                      <KbdGroup>
+                        <Kbd>⌘</Kbd>
+                        <Kbd>K</Kbd>
+                      </KbdGroup>
                     )}
                   </SidebarMenuButton>
                 </SidebarMenuItem>

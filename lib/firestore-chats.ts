@@ -19,6 +19,7 @@ interface StoredMessage {
   content: string;
   timestamp: number;
   modelId?: string;
+  requestedModelId?: string;
   error?: string;
 }
 
@@ -53,6 +54,10 @@ function chatToStored(chat: Chat): StoredChat {
       if (m.modelId) {
         storedMessage.modelId = m.modelId;
       }
+      // Only include requestedModelId if it exists
+      if (m.requestedModelId) {
+        storedMessage.requestedModelId = m.requestedModelId;
+      }
       // Only include error if it exists
       if (m.error) {
         storedMessage.error = m.error;
@@ -80,6 +85,7 @@ function storedToChat(stored: StoredChat): Chat {
       content: m.content,
       timestamp: new Date(m.timestamp),
       modelId: m.modelId,
+      requestedModelId: m.requestedModelId,
       error: m.error,
     })),
     createdAt: new Date(stored.createdAt),
@@ -141,6 +147,7 @@ export async function subscribeToChats(
 }
 
 // Get recently used model IDs from chat history
+// Uses requestedModelId (e.g., openrouter/auto) if present, otherwise uses modelId
 export async function getRecentModelIds(userId: string, limit: number = 5): Promise<string[]> {
   const db = await getFirestore();
   const chatsRef = collection(db, "users", userId, "chats");
@@ -154,10 +161,14 @@ export async function getRecentModelIds(userId: string, limit: number = 5): Prom
     // Go through messages in reverse order (most recent first)
     for (let i = chat.messages.length - 1; i >= 0; i--) {
       const msg = chat.messages[i];
-      if (msg.modelId && msg.role === "assistant") {
-        modelIds.add(msg.modelId);
-        if (modelIds.size >= limit) {
-          return Array.from(modelIds);
+      if (msg.role === "assistant") {
+        // Prefer requestedModelId (router) over modelId (actual model used)
+        const modelToTrack = msg.requestedModelId || msg.modelId;
+        if (modelToTrack) {
+          modelIds.add(modelToTrack);
+          if (modelIds.size >= limit) {
+            return Array.from(modelIds);
+          }
         }
       }
     }
