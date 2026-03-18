@@ -45,7 +45,11 @@ function MainLayout() {
       <AppSidebar />
       <SidebarInset>
         <header 
-          className={`fixed top-0 right-0 z-50 flex h-12 items-center gap-2 bg-background/80 backdrop-blur-xl px-2 sm:px-4 transition-[border-color,left] duration-200 ease-linear ${isScrolled ? "border-b" : "border-b border-transparent"}`}
+          className={`fixed top-0 right-0 z-50 flex h-12 items-center gap-2 px-2 sm:px-4 transition-[border-color,left,background-color] duration-200 ease-linear ${
+            isScrolled
+              ? "bg-background/80 backdrop-blur-xl border-b"
+              : "bg-background border-b border-transparent"
+          }`}
           style={{ 
             left: getLeftPosition(),
             // Make the header draggable in Electron (except for interactive elements)

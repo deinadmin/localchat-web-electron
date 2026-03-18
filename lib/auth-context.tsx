@@ -62,6 +62,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const provider = getGoogleProvider();
       await signInWithPopup(auth, provider);
     } catch (error) {
+      // Firebase can emit `auth/cancelled-popup-request` when the popup flow is aborted.
+      // For this case we intentionally do nothing (no logging, no rethrow) to avoid
+      // any frontend feedback.
+      const code = (error as any)?.code;
+      const message = (error as any)?.message;
+      if (
+        code === "auth/cancelled-popup-request" ||
+        (typeof message === "string" && message.includes("auth/cancelled-popup-request"))
+      ) {
+        return;
+      }
+
       console.error("Error signing in with Google:", error);
       throw error;
     }
