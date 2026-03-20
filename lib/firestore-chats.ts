@@ -10,7 +10,7 @@ import {
   onSnapshot,
   Unsubscribe,
 } from "firebase/firestore";
-import type { Chat, Message } from "./chat-store";
+import type { Chat, UrlCitation } from "./chat-store";
 
 // Firestore-compatible types (no Date objects)
 interface StoredMessage {
@@ -21,6 +21,9 @@ interface StoredMessage {
   modelId?: string;
   requestedModelId?: string;
   error?: string;
+  annotations?: UrlCitation[];
+  reasoning?: string;
+  thinkingDuration?: number;
 }
 
 interface StoredChat {
@@ -62,6 +65,15 @@ function chatToStored(chat: Chat): StoredChat {
       if (m.error) {
         storedMessage.error = m.error;
       }
+      if (m.annotations?.length) {
+        storedMessage.annotations = m.annotations;
+      }
+      if (m.reasoning) {
+        storedMessage.reasoning = m.reasoning;
+      }
+      if (typeof m.thinkingDuration === "number") {
+        storedMessage.thinkingDuration = m.thinkingDuration;
+      }
       return storedMessage;
     }),
     createdAt: chat.createdAt.getTime(),
@@ -87,6 +99,9 @@ function storedToChat(stored: StoredChat): Chat {
       modelId: m.modelId,
       requestedModelId: m.requestedModelId,
       error: m.error,
+      annotations: m.annotations,
+      reasoning: m.reasoning,
+      thinkingDuration: m.thinkingDuration,
     })),
     createdAt: new Date(stored.createdAt),
     updatedAt: new Date(stored.updatedAt),

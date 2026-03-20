@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import Image from "next/image";
 import {
   Sidebar,
@@ -125,18 +125,12 @@ export function AppSidebar() {
   const [deleteChatId, setDeleteChatId] = useState<string | null>(null);
   const [deleteProviderId, setDeleteProviderId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
-  const stickyHeaderRef = useRef<HTMLDivElement>(null);
+  const sidebarContentRef = useRef<HTMLDivElement>(null);
   const [sidebarScrolled, setSidebarScrolled] = useState(false);
 
-  // Track sidebar content scroll for sticky header shadow
-  useEffect(() => {
-    const scrollEl = stickyHeaderRef.current?.parentElement;
-    if (!scrollEl) return;
-    const handleScroll = () =>
-      setSidebarScrolled((scrollEl as HTMLElement).scrollTop > 0);
-    handleScroll();
-    scrollEl.addEventListener("scroll", handleScroll, { passive: true });
-    return () => scrollEl.removeEventListener("scroll", handleScroll);
+  const syncSidebarScrollState = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    setSidebarScrolled(el.scrollTop > 0.5);
   }, []);
 
   // Focus the edit input when editingChatId changes
@@ -165,7 +159,7 @@ export function AppSidebar() {
 
   const { chats, activeChatId, createChat, setActiveChat, deleteChat, updateChatTitle, togglePinChat, getChatById } =
     useChatStore();
-  const { state } = useSidebar();
+  const { state, openMobile } = useSidebar();
   const { user, loading, signInWithGoogle, signOut } = useAuth();
   const { providers, addProvider, removeProvider, updateProvider, setSelectedModel } =
     useProvidersStore();
@@ -249,6 +243,17 @@ export function AppSidebar() {
       return 0; // Keep original order (already sorted by updatedAt from Firestore)
     });
   }, [chats]);
+
+  useLayoutEffect(() => {
+    const id = requestAnimationFrame(() => {
+      syncSidebarScrollState(sidebarContentRef.current);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [syncSidebarScrollState, filteredChats.length, state, openMobile]);
+
+  const handleSidebarContentScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    syncSidebarScrollState(e.currentTarget);
+  };
 
   const handleNewChat = () => {
     // Just navigate to empty state (no active chat)
@@ -446,11 +451,18 @@ export function AppSidebar() {
           </SidebarMenu>
         </SidebarHeader>
 
-        <SidebarContent onContextMenu={(e) => e.preventDefault()}>
+        <SidebarContent
+          ref={sidebarContentRef}
+          onScroll={handleSidebarContentScroll}
+          onContextMenu={(e) => e.preventDefault()}
+        >
           {/* Sticky: New Chat + Search Chats */}
           <div
-            ref={stickyHeaderRef}
-            className={`sticky top-0 z-10 shrink-0 bg-sidebar pb-1 transition-shadow duration-200 ${sidebarScrolled ? "shadow-[0_4px_6px_-2px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_6px_-2px_rgba(0,0,0,0.25)]" : ""}`}
+            className={`sticky top-0 z-20 w-full min-w-0 shrink-0 border-b-[0.5px] bg-sidebar pb-1 transition-[box-shadow,border-color] duration-200 ease-out ${
+              sidebarScrolled
+                ? "border-[oklch(0.86_0_0)] dark:border-sidebar-border shadow-[0_10px_28px_-8px_rgba(0,0,0,0.14),inset_0_-10px_14px_-12px_rgba(0,0,0,0.06)] dark:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.45),inset_0_-10px_16px_-12px_rgba(0,0,0,0.2)]"
+                : "border-transparent shadow-none"
+            }`}
           >
             <SidebarGroup className="px-2 py-0">
               <SidebarGroupContent>

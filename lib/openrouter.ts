@@ -2,6 +2,14 @@ import { Model } from "./providers-store";
 
 const OPENROUTER_API_BASE = "https://openrouter.ai/api/v1";
 
+export interface UrlCitation {
+  url: string;
+  title?: string;
+  content?: string;
+  start_index?: number;
+  end_index?: number;
+}
+
 export interface OpenRouterModel {
   id: string;
   name: string;
@@ -73,14 +81,20 @@ export async function fetchModels(apiKey: string): Promise<Model[]> {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export type StreamingPhase = 'connecting' | 'searching' | 'thinking' | 'generating';
+
 export interface StreamChatParams {
   messages: ChatMessage[];
   model: string;
   apiKey: string;
+  plugins?: Array<{ id: string; [key: string]: unknown }>;
   onChunk: (content: string) => void;
   onDone: () => void;
   onError: (error: Error) => void;
-  onModel?: (model: string) => void; // Called when the actual model is known (useful for routers)
+  onModel?: (model: string) => void;
+  onAnnotations?: (annotations: UrlCitation[]) => void;
+  onStatusChange?: (status: StreamingPhase) => void;
+  onReasoning?: (chunk: string) => void;
   signal?: AbortSignal;
 }
 
@@ -88,13 +102,28 @@ export async function streamChat({
   messages,
   model,
   apiKey,
+  plugins,
   onChunk,
   onDone,
   onError,
   onModel,
+  onAnnotations,
+  onStatusChange,
+  onReasoning,
   signal,
 }: StreamChatParams): Promise<void> {
   try {
+    onStatusChange?.('connecting');
+
+    const body: Record<string, unknown> = {
+      model,
+      messages,
+      stream: true,
+    };
+    if (plugins?.length) {
+      body.plugins = plugins;
+    }
+
     const response = await fetch(`${OPENROUTER_API_BASE}/chat/completions`, {
       method: "POST",
       headers: {
@@ -103,11 +132,7 @@ export async function streamChat({
         "X-Title": "LocalChat",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: true,
-      }),
+      body: JSON.stringify(body),
       signal,
     });
 
@@ -124,6 +149,14 @@ export async function streamChat({
     const decoder = new TextDecoder();
     let buffer = "";
     let modelReported = false;
+    let allAnnotations: UrlCitation[] = [];
+    let hasReportedSearching = false;
+    let hasReportedThinking = false;
+    let hasReportedGenerating = false;
+    // Some models/providers may stream "reasoning" as either incremental deltas or
+    // as a cumulative string. Track the latest full reasoning we saw so we only
+    // forward the new suffix to the UI.
+    let lastReasoning = "";
 
     try {
       while (true) {
@@ -132,7 +165,6 @@ export async function streamChat({
 
         buffer += decoder.decode(value, { stream: true });
 
-        // Process complete lines from buffer
         while (true) {
           const lineEnd = buffer.indexOf("\n");
           if (lineEnd === -1) break;
@@ -140,7 +172,6 @@ export async function streamChat({
           const line = buffer.slice(0, lineEnd).trim();
           buffer = buffer.slice(lineEnd + 1);
 
-          // Skip empty lines and comments
           if (!line || line.startsWith(":")) continue;
 
           if (line.startsWith("data: ")) {
@@ -153,23 +184,91 @@ export async function streamChat({
             try {
               const parsed = JSON.parse(data);
               
-              // Check for errors
               if (parsed.error) {
                 throw new Error(parsed.error.message || "Stream error");
               }
 
-              // Report the actual model used (from the first chunk that has it)
               if (!modelReported && parsed.model && onModel) {
                 onModel(parsed.model);
                 modelReported = true;
               }
 
+              // Extract reasoning tokens (delta.reasoning string or delta.reasoning_details array)
+              const deltaReasoning = parsed.choices?.[0]?.delta?.reasoning;
+              const deltaReasoningDetails = parsed.choices?.[0]?.delta?.reasoning_details;
+
+              // Prefer reasoning_details.text when present, because for some models
+              // OpenRouter includes both `delta.reasoning` and `delta.reasoning_details`
+              // for the same chunk (which would otherwise double the output).
+              let reasoningTextFromDetails = "";
+              if (deltaReasoningDetails && Array.isArray(deltaReasoningDetails)) {
+                for (const detail of deltaReasoningDetails) {
+                  if (detail?.type === "reasoning.text" && typeof detail.text === "string") {
+                    reasoningTextFromDetails += detail.text;
+                  }
+                }
+              }
+
+              const reasoningTextCandidate =
+                reasoningTextFromDetails ||
+                (typeof deltaReasoning === "string" ? deltaReasoning : "");
+
+              if (reasoningTextCandidate) {
+                if (!hasReportedThinking) {
+                  hasReportedThinking = true;
+                  onStatusChange?.('thinking');
+                }
+
+                // De-dup in case the stream sends cumulative reasoning.
+                let newSuffix = reasoningTextCandidate;
+                if (lastReasoning && reasoningTextCandidate.startsWith(lastReasoning)) {
+                  newSuffix = reasoningTextCandidate.slice(lastReasoning.length);
+                  lastReasoning = reasoningTextCandidate;
+                } else {
+                  lastReasoning = lastReasoning + newSuffix;
+                }
+
+                if (newSuffix) {
+                  onReasoning?.(newSuffix);
+                }
+              }
+
               const content = parsed.choices?.[0]?.delta?.content;
               if (content) {
+                if (!hasReportedGenerating) {
+                  hasReportedGenerating = true;
+                  onStatusChange?.('generating');
+                }
                 onChunk(content);
               }
+
+              // Collect annotations from delta or message
+              const deltaAnnotations =
+                parsed.choices?.[0]?.delta?.annotations ||
+                parsed.choices?.[0]?.message?.annotations;
+              if (deltaAnnotations && Array.isArray(deltaAnnotations)) {
+                const newCitations = deltaAnnotations
+                  .filter((a: Record<string, unknown>) => a.type === "url_citation" && a.url_citation)
+                  .map((a: Record<string, unknown>) => {
+                    const c = a.url_citation as Record<string, unknown>;
+                    return {
+                      url: c.url as string,
+                      title: c.title as string | undefined,
+                      content: c.content as string | undefined,
+                      start_index: c.start_index as number | undefined,
+                      end_index: c.end_index as number | undefined,
+                    };
+                  });
+                if (newCitations.length > 0) {
+                  if (!hasReportedSearching) {
+                    hasReportedSearching = true;
+                    onStatusChange?.('searching');
+                  }
+                  allAnnotations = [...allAnnotations, ...newCitations];
+                  onAnnotations?.(allAnnotations);
+                }
+              }
             } catch (e) {
-              // Ignore JSON parse errors for malformed chunks
               if (e instanceof SyntaxError) continue;
               throw e;
             }
@@ -177,15 +276,33 @@ export async function streamChat({
         }
       }
     } finally {
-      reader.cancel();
+      try {
+        await reader.cancel();
+      } catch {
+        // Swallow cancellation errors (expected on user abort).
+      }
     }
 
     onDone();
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    const maybeAny = error as any;
+    const name = typeof maybeAny?.name === "string" ? maybeAny.name : undefined;
+    const message =
+      typeof maybeAny?.message === "string"
+        ? maybeAny.message
+        : typeof maybeAny === "string"
+          ? maybeAny
+          : undefined;
+
+    const isAbort =
+      name === "AbortError" ||
+      (typeof message === "string" && /aborted|aborterror/i.test(message));
+
+    if (isAbort) {
       onDone();
       return;
     }
+
     onError(error instanceof Error ? error : new Error("Unknown error"));
   }
 }

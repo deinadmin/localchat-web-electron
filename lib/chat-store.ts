@@ -1,15 +1,23 @@
 "use client";
 
 import { create } from "zustand";
+import type { UrlCitation } from "./openrouter";
+
+export type { UrlCitation };
+
+export type StreamingStatus = 'connecting' | 'searching' | 'thinking' | 'generating' | null;
 
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
-  modelId?: string; // The model used to generate this message (for assistant messages)
-  requestedModelId?: string; // The model that was requested (e.g., openrouter/auto when actual modelId differs)
-  error?: string; // Error message if generation failed
+  modelId?: string;
+  requestedModelId?: string;
+  error?: string;
+  annotations?: UrlCitation[];
+  reasoning?: string;
+  thinkingDuration?: number;
 }
 
 export interface Chat {
@@ -26,6 +34,7 @@ interface ChatState {
   activeChatId: string | null;
   isLoading: boolean;
   streamingMessageId: string | null;
+  streamingStatus: StreamingStatus;
   userId: string | null;
   isInitialSyncComplete: boolean;
 
@@ -40,11 +49,15 @@ interface ChatState {
   setMessageError: (chatId: string, messageId: string, error: string) => void;
   clearMessageError: (chatId: string, messageId: string) => void;
   appendToMessage: (chatId: string, messageId: string, chunk: string) => void;
+  appendToMessageReasoning: (chatId: string, messageId: string, chunk: string) => void;
+  setMessageThinkingDuration: (chatId: string, messageId: string, duration: number) => void;
+  setMessageAnnotations: (chatId: string, messageId: string, annotations: UrlCitation[]) => void;
   deleteMessage: (chatId: string, messageId: string) => void;
   updateChatTitle: (chatId: string, title: string) => void;
   togglePinChat: (chatId: string) => void;
   setLoading: (loading: boolean) => void;
   setStreamingMessageId: (id: string | null) => void;
+  setStreamingStatus: (status: StreamingStatus) => void;
   
   // Firestore sync
   setUserId: (userId: string | null) => void;
@@ -63,6 +76,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeChatId: null,
   isLoading: false,
   streamingMessageId: null,
+  streamingStatus: null,
   userId: null,
   isInitialSyncComplete: false,
 
@@ -217,7 +231,53 @@ export const useChatStore = create<ChatState>((set, get) => ({
           messages: chat.messages.map((msg) =>
             msg.id === messageId ? { ...msg, content: msg.content + chunk } : msg
           ),
-          updatedAt: new Date(), // Update timestamp so sync detects changes
+          updatedAt: new Date(),
+        };
+      }),
+    }));
+  },
+
+  appendToMessageReasoning: (chatId, messageId, chunk) => {
+    set((state) => ({
+      chats: state.chats.map((chat) => {
+        if (chat.id !== chatId) return chat;
+        return {
+          ...chat,
+          messages: chat.messages.map((msg) =>
+            msg.id === messageId ? { ...msg, reasoning: (msg.reasoning || '') + chunk } : msg
+          ),
+          // Ensure Firestore sync triggers while we're only streaming reasoning.
+          updatedAt: new Date(),
+        };
+      }),
+    }));
+  },
+
+  setMessageThinkingDuration: (chatId, messageId, duration) => {
+    set((state) => ({
+      chats: state.chats.map((chat) => {
+        if (chat.id !== chatId) return chat;
+        return {
+          ...chat,
+          messages: chat.messages.map((msg) =>
+            msg.id === messageId ? { ...msg, thinkingDuration: duration } : msg
+          ),
+          // Ensure Firestore sync triggers when reasoning ends.
+          updatedAt: new Date(),
+        };
+      }),
+    }));
+  },
+
+  setMessageAnnotations: (chatId, messageId, annotations) => {
+    set((state) => ({
+      chats: state.chats.map((chat) => {
+        if (chat.id !== chatId) return chat;
+        return {
+          ...chat,
+          messages: chat.messages.map((msg) =>
+            msg.id === messageId ? { ...msg, annotations } : msg
+          ),
         };
       }),
     }));
@@ -258,6 +318,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setStreamingMessageId: (id) => {
     set({ streamingMessageId: id });
+  },
+
+  setStreamingStatus: (status) => {
+    set({ streamingStatus: status });
   },
 
   setUserId: (userId) => {

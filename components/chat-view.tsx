@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo, useCallback, memo, FormEvent, KeyboardEvent, ReactNode } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback, memo, createContext, useContext, FormEvent, KeyboardEvent, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import {
@@ -27,8 +27,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useChatStore, Message } from "@/lib/chat-store";
+import { useChatStore, Message, UrlCitation, StreamingStatus } from "@/lib/chat-store";
 import { useProvidersStore } from "@/lib/providers-store";
 import { parseModelName, ProviderIcon, ModelProvider } from "@/components/model-picker";
 import { useAuth } from "@/lib/auth-context";
@@ -62,11 +70,13 @@ import {
   IconPencil,
   IconQuote,
   IconChevronDown,
+  IconChevronRight,
   IconSearch,
   IconAlertTriangle,
   IconPlayerStopFilled,
   IconInfoCircle,
   IconCoins,
+  IconExternalLink,
 } from "@tabler/icons-react";
 import {
   estimateTokenCount,
@@ -193,6 +203,255 @@ const CodeBlock = memo(function CodeBlock({ children, className, ...props }: { c
   );
 });
 
+// Citation context for passing annotation data to markdown link components
+const CitationContext = createContext<Map<string, { index: number; citation: UrlCitation }>>(new Map());
+
+function getFaviconUrl(url: string): string {
+  try {
+    const domain = new URL(url).hostname.replace("www.", "");
+    return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+  } catch {
+    return "";
+  }
+}
+
+function getDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace("www.", "");
+  } catch {
+    return url;
+  }
+}
+
+// Small numbered circle for inline citations
+const CitationBadge = memo(function CitationBadge({ index, citation }: { index: number; citation: UrlCitation }) {
+  const domain = getDomain(citation.url);
+  const faviconUrl = getFaviconUrl(citation.url);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <a
+          href={citation.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center justify-center size-[18px] rounded-full bg-primary/10 text-primary text-[10px] font-semibold hover:bg-primary/20 transition-colors cursor-pointer align-super ml-0.5 no-underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {index}
+        </a>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs p-2.5">
+        <div className="flex items-start gap-2.5">
+          <img src={faviconUrl} alt="" className="size-4 rounded-sm mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="font-medium text-xs truncate">{citation.title || domain}</p>
+            <p className="text-[10px] opacity-70 truncate">{domain}</p>
+          </div>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+});
+
+// Stacked favicon sources button for AI messages
+const SourcesButton = memo(function SourcesButton({
+  annotations,
+  onOpen,
+}: {
+  annotations: UrlCitation[];
+  onOpen: () => void;
+}) {
+  const uniqueCitations = useMemo(() => {
+    const seen = new Set<string>();
+    return annotations.filter((a) => {
+      if (seen.has(a.url)) return false;
+      seen.add(a.url);
+      return true;
+    });
+  }, [annotations]);
+
+  const displayCitations = uniqueCitations.slice(0, 3);
+
+  if (displayCitations.length === 0) return null;
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onOpen}
+      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground rounded-xl active:scale-95 transition-all duration-200 gap-1.5"
+    >
+      <div className="flex items-center -space-x-1.5">
+        {displayCitations.map((citation, i) => (
+          <div
+            key={citation.url}
+            className="size-[18px] rounded-full border-2 border-background bg-muted overflow-hidden"
+            style={{ zIndex: displayCitations.length - i }}
+          >
+            <img src={getFaviconUrl(citation.url)} alt="" className="size-full object-cover" />
+          </div>
+        ))}
+      </div>
+      Sources
+    </Button>
+  );
+});
+
+// Modal listing all sources
+function SourcesModal({
+  open,
+  onOpenChange,
+  annotations,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  annotations: UrlCitation[];
+}) {
+  const uniqueCitations = useMemo(() => {
+    const seen = new Set<string>();
+    const result: (UrlCitation & { index: number })[] = [];
+    annotations.forEach((a) => {
+      if (!seen.has(a.url)) {
+        seen.add(a.url);
+        result.push({ ...a, index: result.length + 1 });
+      }
+    });
+    return result;
+  }, [annotations]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Sources</DialogTitle>
+          <DialogDescription>
+            {uniqueCitations.length} source{uniqueCitations.length !== 1 ? "s" : ""} referenced in this response
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1 max-h-80 overflow-y-auto -mx-1">
+          {uniqueCitations.map((citation) => {
+            const domain = getDomain(citation.url);
+            const faviconUrl = getFaviconUrl(citation.url);
+            return (
+              <a
+                key={citation.url}
+                href={citation.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-muted transition-colors group"
+              >
+                <span className="flex items-center justify-center size-6 rounded-full bg-primary/10 text-primary text-xs font-semibold shrink-0">
+                  {citation.index}
+                </span>
+                <img src={faviconUrl} alt="" className="size-4 rounded-sm shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
+                    {citation.title || domain}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">{domain}</p>
+                </div>
+                <IconExternalLink className="size-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+              </a>
+            );
+          })}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Expandable thinking/reasoning block with live timer
+const ThinkingBlock = memo(function ThinkingBlock({
+  reasoning,
+  isThinking,
+  thinkingDuration,
+  thinkingStartTime,
+}: {
+  reasoning: string;
+  isThinking: boolean;
+  thinkingDuration?: number;
+  thinkingStartTime: number | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!isThinking || !thinkingStartTime) return;
+    const update = () => setElapsed(Math.floor((Date.now() - thinkingStartTime) / 1000));
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [isThinking, thinkingStartTime]);
+
+  const seconds = isThinking ? elapsed : (thinkingDuration ?? 0);
+
+  const formatTime = (s: number) => {
+    if (s < 1) return '';
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    if (rem === 0) return `${m}min`;
+    return `${m}min and ${rem}s`;
+  };
+
+  const timeStr = formatTime(seconds);
+  const label = isThinking
+    ? timeStr ? `Thinking for ${timeStr}...` : 'Thinking...'
+    : `Thought for ${timeStr || '< 1s'}`;
+
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="group/think flex items-center gap-1.5 text-sm cursor-pointer select-none"
+      >
+        <span
+          className={isThinking ? 'shimmer-text' : 'text-muted-foreground'}
+          data-text={label}
+        >
+          {label}
+        </span>
+        <IconChevronRight
+          className={`size-3.5 transition-all duration-200 ${
+            expanded ? 'rotate-90 opacity-100' : 'opacity-0 group-hover/think:opacity-100'
+          } ${isThinking ? 'shimmer-icon' : 'text-muted-foreground'}`}
+        />
+      </button>
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+          expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="mt-2 ml-5 text-sm text-muted-foreground/80 border-l-2 border-border pl-3 whitespace-pre-wrap select-text max-h-96 overflow-y-auto">
+            {reasoning || (isThinking ? '' : 'No reasoning content available.')}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// Status line for connecting/searching phases
+function StreamingStatusLine({ status }: { status: StreamingStatus }) {
+  const text =
+    status === 'connecting' ? 'Connecting to OpenRouter...'
+    : status === 'searching' ? 'Searching the web...'
+    : null;
+
+  if (!text) return null;
+
+  return (
+    <div className="mb-2 animate-status-fade-in" key={status}>
+      <span className="shimmer-text text-sm" data-text={text}>
+        {text}
+      </span>
+    </div>
+  );
+}
+
 // Custom markdown components with shadcn styling
 const markdownComponents: Components = {
   // Heading components
@@ -313,8 +572,19 @@ const markdownComponents: Components = {
       </code>
     );
   },
-  // Link component - handle anchor links for footnotes
+  // Link component - handle anchor links, citations, and external links
   a: ({ children, href, ...props }) => {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const citationMap = useContext(CitationContext);
+
+    // Check if this link matches a citation
+    if (href && citationMap.size > 0) {
+      const citation = citationMap.get(href);
+      if (citation) {
+        return <CitationBadge index={citation.index} citation={citation.citation} />;
+      }
+    }
+
     // Check if this is an anchor link (footnote)
     if (href?.startsWith("#")) {
       return (
@@ -326,18 +596,15 @@ const markdownComponents: Components = {
             const targetId = href.slice(1);
             const targetElement = document.getElementById(targetId);
             if (targetElement) {
-              // Find the scroll container (the flex-1 overflow-y-auto div)
               const scrollContainer = targetElement.closest('.flex-1.overflow-y-auto');
               if (scrollContainer) {
                 const containerRect = scrollContainer.getBoundingClientRect();
                 const targetRect = targetElement.getBoundingClientRect();
-                // Calculate scroll position with offset for floating input (approx 120px)
                 const inputOffset = 120;
                 const relativeTop = targetRect.top - containerRect.top + scrollContainer.scrollTop;
                 const scrollTo = relativeTop - containerRect.height + inputOffset + targetRect.height;
                 scrollContainer.scrollTo({ top: Math.max(0, scrollTo), behavior: "smooth" });
               } else {
-                // Fallback to scrollIntoView
                 targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
               }
             }
@@ -368,6 +635,8 @@ const markdownComponents: Components = {
 interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
+  streamingStatus?: StreamingStatus;
+  thinkingStartTime?: number | null;
   isEditing?: boolean;
   editingContent?: string;
   onEditStart?: () => void;
@@ -384,6 +653,8 @@ interface MessageBubbleProps {
 const MessageBubble = memo(function MessageBubble({
   message,
   isStreaming,
+  streamingStatus,
+  thinkingStartTime,
   isEditing,
   editingContent,
   onEditStart,
@@ -402,6 +673,7 @@ const MessageBubble = memo(function MessageBubble({
   const [modelSearch, setModelSearch] = useState("");
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [showInfoDialog, setShowInfoDialog] = useState(false);
+  const [showSourcesModal, setShowSourcesModal] = useState(false);
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -444,6 +716,19 @@ const MessageBubble = memo(function MessageBubble({
     
     return calculateCost(promptTokens, completionTokens, modelInfo.model.pricing);
   }, [modelInfo?.model?.pricing, message.content, previousMessages]);
+
+  // Build citation map from annotations
+  const citationMap = useMemo(() => {
+    const map = new Map<string, { index: number; citation: UrlCitation }>();
+    if (!message.annotations?.length) return map;
+    let idx = 1;
+    for (const annotation of message.annotations) {
+      if (!map.has(annotation.url)) {
+        map.set(annotation.url, { index: idx++, citation: annotation });
+      }
+    }
+    return map;
+  }, [message.annotations]);
 
   // Get all available models for the dropdown
   const availableModels = useMemo(() => {
@@ -663,20 +948,30 @@ const MessageBubble = memo(function MessageBubble({
                   </>
                 ) : (
                   <>
-                    <div className="prose prose-sm dark:prose-invert max-w-none min-w-0 prose-p:leading-relaxed prose-code:before:content-none prose-code:after:content-none select-text cursor-text">
-                      {message.content ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={markdownComponents}>
-                          {message.content}
-                        </ReactMarkdown>
-                      ) : null}
-                      {isStreaming && (
-                        <span className="inline-flex items-center gap-1 ml-1">
-                          <span className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "0ms" }} />
-                          <span className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "150ms" }} />
-                          <span className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "300ms" }} />
-                        </span>
+                    <CitationContext.Provider value={citationMap}>
+                      {/* Thinking block - shown during reasoning and persists after */}
+                      {(message.reasoning || (isStreaming && streamingStatus === 'thinking')) && (
+                        <ThinkingBlock
+                          reasoning={message.reasoning || ''}
+                          isThinking={!!isStreaming && streamingStatus === 'thinking'}
+                          thinkingDuration={message.thinkingDuration}
+                          thinkingStartTime={thinkingStartTime ?? null}
+                        />
                       )}
-                    </div>
+
+                      {/* Status line for connecting/searching phases */}
+                      {isStreaming && !message.content && streamingStatus !== 'thinking' && (
+                        <StreamingStatusLine status={streamingStatus ?? null} />
+                      )}
+
+                      <div className="prose prose-sm dark:prose-invert max-w-none min-w-0 prose-p:leading-relaxed prose-code:before:content-none prose-code:after:content-none select-text cursor-text">
+                        {message.content ? (
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={markdownComponents}>
+                            {message.content}
+                          </ReactMarkdown>
+                        ) : null}
+                      </div>
+                    </CitationContext.Provider>
                     {/* Action buttons for AI messages */}
                     {!isStreaming && message.content && (
                       <div className={`flex items-center gap-1 mt-2 select-none h-7 transition-opacity duration-200 ${modelDropdownOpen ? "opacity-100" : "opacity-0 group-hover/message:opacity-100"}`}>
@@ -775,6 +1070,14 @@ const MessageBubble = memo(function MessageBubble({
                               </>
                             )}
                           </Button>
+                        )}
+
+                        {/* Sources button */}
+                        {message.annotations && message.annotations.length > 0 && (
+                          <SourcesButton
+                            annotations={message.annotations}
+                            onOpen={() => setShowSourcesModal(true)}
+                          />
                         )}
 
                         {/* Delete button */}
@@ -883,15 +1186,26 @@ const MessageBubble = memo(function MessageBubble({
         modelCleanName={modelInfo?.cleanName || null}
         previousMessages={previousMessages}
       />
+      {message.annotations && message.annotations.length > 0 && (
+        <SourcesModal
+          open={showSourcesModal}
+          onOpenChange={setShowSourcesModal}
+          annotations={message.annotations}
+        />
+      )}
     </ContextMenu>
   );
 }, (prevProps, nextProps) => {
-  // Custom comparison for memo - only re-render when these specific props change
   return (
     prevProps.message.id === nextProps.message.id &&
     prevProps.message.content === nextProps.message.content &&
     prevProps.message.error === nextProps.message.error &&
+    prevProps.message.annotations === nextProps.message.annotations &&
+    prevProps.message.reasoning === nextProps.message.reasoning &&
+    prevProps.message.thinkingDuration === nextProps.message.thinkingDuration &&
     prevProps.isStreaming === nextProps.isStreaming &&
+    prevProps.streamingStatus === nextProps.streamingStatus &&
+    prevProps.thinkingStartTime === nextProps.thinkingStartTime &&
     prevProps.isEditing === nextProps.isEditing &&
     prevProps.editingContent === nextProps.editingContent
   );
@@ -931,10 +1245,11 @@ const FloatingInput = memo(function FloatingInput({
   textareaRef,
   fullWidth,
 }: FloatingInputProps) {
-  const LINE_HEIGHT = 20; // Approximate line height in pixels
+  const LINE_HEIGHT = 20;
   const MAX_LINES = 8;
   const MAX_HEIGHT = LINE_HEIGHT * MAX_LINES;
   const { state, isMobile } = useSidebar();
+  const { webSearchEnabled, setWebSearchEnabled } = useLocalSettingsStore();
 
   // Calculate left position based on sidebar state (offcanvas mode)
   const getLeftPosition = () => {
@@ -1093,7 +1408,12 @@ const FloatingInput = memo(function FloatingInput({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="text-muted-foreground hover:text-foreground gap-1.5 rounded-xl"
+                  onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                  className={`gap-1.5 rounded-xl transition-all duration-200 ${
+                    webSearchEnabled
+                      ? "bg-primary/10 text-primary hover:bg-primary/15 border border-primary/20"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
                 >
                   <IconWorld className="size-4" />
                   Search
@@ -1183,12 +1503,15 @@ export function ChatView() {
 
   const { user } = useAuth();
   const { setIsScrolled } = useScroll();
-  const { fullWidthChat, showEstimatedCost } = useLocalSettingsStore();
+  const { fullWidthChat, showEstimatedCost, webSearchEnabled } = useLocalSettingsStore();
+
+  const thinkingStartTimeRef = useRef<number | null>(null);
 
   // Use separate selectors for better performance - only subscribe to what we need
   const activeChatId = useChatStore((state) => state.activeChatId);
   const isLoading = useChatStore((state) => state.isLoading);
   const streamingMessageId = useChatStore((state) => state.streamingMessageId);
+  const streamingStatus = useChatStore((state) => state.streamingStatus);
 
   // Use a memoized selector for activeChat to prevent unnecessary re-renders
   const activeChat = useChatStore(
@@ -1201,12 +1524,16 @@ export function ChatView() {
     addMessage,
     addMessageWithId,
     appendToMessage,
+    appendToMessageReasoning,
+    setMessageThinkingDuration,
     deleteMessage,
     updateMessageContent,
     updateMessageModel,
     setMessageError,
+    setMessageAnnotations,
     setLoading,
     setStreamingMessageId,
+    setStreamingStatus,
   } = useChatStore();
 
   const { selectedModel, providers, setSelectedModel } = useProvidersStore();
@@ -1258,6 +1585,12 @@ export function ChatView() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    if (thinkingStartTimeRef.current && streamingMessageId && activeChatId) {
+      const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
+      setMessageThinkingDuration(activeChatId, streamingMessageId, duration);
+      thinkingStartTimeRef.current = null;
+    }
+    setStreamingStatus(null);
     setStreamingMessageId(null);
     setLoading(false);
   };
@@ -1303,6 +1636,8 @@ export function ChatView() {
       ...(isAutoRouter && { requestedModelId: selectedModel.modelId }),
     });
     setStreamingMessageId(assistantMessageId);
+    setStreamingStatus('connecting');
+    thinkingStartTimeRef.current = null;
     setLoading(true);
 
     try {
@@ -1311,6 +1646,7 @@ export function ChatView() {
       if (!apiKey) {
         toast.error("API key not found. Please reconfigure your provider.");
         setLoading(false);
+        setStreamingStatus(null);
         setStreamingMessageId(null);
         return;
       }
@@ -1327,25 +1663,57 @@ export function ChatView() {
       abortControllerRef.current = new AbortController();
 
       // Stream the response
+      const webSearchPlugins = webSearchEnabled ? [{ id: "web" }] : undefined;
+
       await streamChat({
         messages: messageHistory,
         model: selectedModel.modelId,
         apiKey,
+        plugins: webSearchPlugins,
         onChunk: (chunk) => {
           appendToMessage(chatId!, assistantMessageId, chunk);
         },
         onModel: (actualModel) => {
-          // When using a router, update the message with the actual model used
           if (isAutoRouter && actualModel !== selectedModel.modelId) {
             updateMessageModel(chatId!, assistantMessageId, actualModel);
           }
         },
+        onAnnotations: (annotations) => {
+          setMessageAnnotations(chatId!, assistantMessageId, annotations);
+        },
+        onStatusChange: (status) => {
+          if (status === 'thinking' && !thinkingStartTimeRef.current) {
+            thinkingStartTimeRef.current = Date.now();
+          }
+          const prevStatus = useChatStore.getState().streamingStatus;
+          if (prevStatus === 'thinking' && status !== 'thinking' && thinkingStartTimeRef.current) {
+            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
+            setMessageThinkingDuration(chatId!, assistantMessageId, duration);
+            thinkingStartTimeRef.current = null;
+          }
+          setStreamingStatus(status);
+        },
+        onReasoning: (chunk) => {
+          appendToMessageReasoning(chatId!, assistantMessageId, chunk);
+        },
         onDone: () => {
+          if (thinkingStartTimeRef.current) {
+            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
+            setMessageThinkingDuration(chatId!, assistantMessageId, duration);
+            thinkingStartTimeRef.current = null;
+          }
+          setStreamingStatus(null);
           setStreamingMessageId(null);
           setLoading(false);
         },
         onError: (error) => {
+          if (thinkingStartTimeRef.current) {
+            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
+            setMessageThinkingDuration(chatId!, assistantMessageId, duration);
+            thinkingStartTimeRef.current = null;
+          }
           setMessageError(chatId!, assistantMessageId, error.message);
+          setStreamingStatus(null);
           setStreamingMessageId(null);
           setLoading(false);
         },
@@ -1353,7 +1721,6 @@ export function ChatView() {
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Something went wrong";
-      // If we have a chatId and assistantMessageId, set the error on the message
       if (chatId) {
         const currentChat = useChatStore.getState().chats.find((c) => c.id === chatId);
         const lastMessage = currentChat?.messages[currentChat.messages.length - 1];
@@ -1361,6 +1728,10 @@ export function ChatView() {
           setMessageError(chatId, lastMessage.id, errorMessage);
         }
       }
+      if (thinkingStartTimeRef.current) {
+        thinkingStartTimeRef.current = null;
+      }
+      setStreamingStatus(null);
       setLoading(false);
       setStreamingMessageId(null);
     }
@@ -1431,10 +1802,13 @@ export function ChatView() {
                 streamingMessageId === message.id &&
                 !message.content;
               const shouldAnimateIn = wasJustSent || isStreamingPlaceholder;
+              const isThisStreaming = streamingMessageId === message.id;
               const bubble = (
                 <MessageBubble
                 message={message}
-                isStreaming={streamingMessageId === message.id}
+                isStreaming={isThisStreaming}
+                streamingStatus={isThisStreaming ? streamingStatus : undefined}
+                thinkingStartTime={isThisStreaming ? thinkingStartTimeRef.current : null}
                 isEditing={editingMessageId === message.id}
                 editingContent={editingMessageId === message.id ? editingContent : undefined}
                 onEditStart={() => {
@@ -1537,6 +1911,8 @@ export function ChatView() {
 
                     setLoading(true);
                     setStreamingMessageId(newAssistantMessageId);
+                    setStreamingStatus('connecting');
+                    thinkingStartTimeRef.current = null;
 
                     // Abort any existing request
                     if (abortControllerRef.current) {
@@ -1545,25 +1921,57 @@ export function ChatView() {
                     abortControllerRef.current = new AbortController();
 
                     try {
+                      const regenPlugins = webSearchEnabled ? [{ id: "web" }] : undefined;
+
                       await streamChat({
                         messages: apiMessages,
                         model: modelId,
                         apiKey,
+                        plugins: regenPlugins,
                         onChunk: (content: string) => {
                           appendToMessage(activeChatId, newAssistantMessageId, content);
                         },
                         onModel: (actualModel: string) => {
-                          // When using a router, update the message with the actual model used
                           if (isAutoRouter && actualModel !== modelId) {
                             updateMessageModel(activeChatId, newAssistantMessageId, actualModel);
                           }
                         },
+                        onAnnotations: (annotations) => {
+                          setMessageAnnotations(activeChatId, newAssistantMessageId, annotations);
+                        },
+                        onStatusChange: (status) => {
+                          if (status === 'thinking' && !thinkingStartTimeRef.current) {
+                            thinkingStartTimeRef.current = Date.now();
+                          }
+                          const prevStatus = useChatStore.getState().streamingStatus;
+                          if (prevStatus === 'thinking' && status !== 'thinking' && thinkingStartTimeRef.current) {
+                            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
+                            setMessageThinkingDuration(activeChatId, newAssistantMessageId, duration);
+                            thinkingStartTimeRef.current = null;
+                          }
+                          setStreamingStatus(status);
+                        },
+                        onReasoning: (chunk: string) => {
+                          appendToMessageReasoning(activeChatId, newAssistantMessageId, chunk);
+                        },
                         onDone: () => {
+                          if (thinkingStartTimeRef.current) {
+                            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
+                            setMessageThinkingDuration(activeChatId, newAssistantMessageId, duration);
+                            thinkingStartTimeRef.current = null;
+                          }
+                          setStreamingStatus(null);
                           setStreamingMessageId(null);
                           setLoading(false);
                         },
                         onError: (error: Error) => {
+                          if (thinkingStartTimeRef.current) {
+                            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
+                            setMessageThinkingDuration(activeChatId, newAssistantMessageId, duration);
+                            thinkingStartTimeRef.current = null;
+                          }
                           setMessageError(activeChatId, newAssistantMessageId, error.message);
+                          setStreamingStatus(null);
                           setStreamingMessageId(null);
                           setLoading(false);
                         },
@@ -1572,6 +1980,10 @@ export function ChatView() {
                     } catch (error) {
                       const errMessage = error instanceof Error ? error.message : "Something went wrong";
                       setMessageError(activeChatId, newAssistantMessageId, errMessage);
+                      if (thinkingStartTimeRef.current) {
+                        thinkingStartTimeRef.current = null;
+                      }
+                      setStreamingStatus(null);
                       setLoading(false);
                       setStreamingMessageId(null);
                     }

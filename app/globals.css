@@ -143,3 +143,57 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Streaming status shimmer */
+@keyframes shimmer-slide {
+  0% { transform: translateX(35%); }
+  100% { transform: translateX(-35%); }
+}
+
+.shimmer-text {
+  position: relative;
+  display: inline-block;
+  color: var(--muted-foreground);
+}
+
+.shimmer-text::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  display: inline-block;
+  color: transparent;
+  pointer-events: none;
+
+  background: linear-gradient(
+    90deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 35%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 65%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+
+  animation: shimmer-slide 7.5s linear infinite;
+}
+
+@keyframes shimmer-icon-color {
+  0%, 40%, 60%, 100% { color: var(--muted-foreground); }
+  50% { color: var(--foreground); }
+}
+
+.shimmer-icon {
+  animation: shimmer-icon-color 7.5s linear infinite;
+}
+
+@keyframes status-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-status-fade-in {
+  animation: status-fade-in 300ms ease-out forwards;
+}
