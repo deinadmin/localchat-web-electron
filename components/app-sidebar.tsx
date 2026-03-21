@@ -507,13 +507,14 @@ export function AppSidebar() {
             <SidebarGroup className="px-2 py-0">
               <SidebarGroupContent>
                 <SidebarMenu>
+                  <h1 className="text-xl font-bold ml-1 ">LocalChat</h1>
                   {/* New Chat Button */}
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       onClick={handleNewChat}
                       isActive={isOnNewChat}
                       tooltip="New Chat"
-                      className="mb-1 rounded-lg shadow-none active:scale-[0.98] dark:hover:border-muted-foreground/45 dark:hover:bg-input/30 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                      className="mb-1 mt-1.5 rounded-lg shadow-none active:scale-[0.98] dark:hover:border-muted-foreground/45 dark:hover:bg-input/30 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                     >
                       <IconPlus className="size-4" />
                       <span className="flex-1">New Chat</span>
