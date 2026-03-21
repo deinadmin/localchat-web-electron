@@ -29,12 +29,16 @@ export interface Chat {
   pinned?: boolean;
 }
 
+export interface ChatStreamingState {
+  messageId: string;
+  status: Exclude<StreamingStatus, null>;
+  thinkingStartTime: number | null;
+}
+
 interface ChatState {
   chats: Chat[];
   activeChatId: string | null;
-  isLoading: boolean;
-  streamingMessageId: string | null;
-  streamingStatus: StreamingStatus;
+  streamingChats: Record<string, ChatStreamingState>;
   userId: string | null;
   isInitialSyncComplete: boolean;
 
@@ -55,9 +59,9 @@ interface ChatState {
   deleteMessage: (chatId: string, messageId: string) => void;
   updateChatTitle: (chatId: string, title: string) => void;
   togglePinChat: (chatId: string) => void;
-  setLoading: (loading: boolean) => void;
-  setStreamingMessageId: (id: string | null) => void;
-  setStreamingStatus: (status: StreamingStatus) => void;
+  setChatStreaming: (chatId: string, streaming: ChatStreamingState) => void;
+  updateChatStreaming: (chatId: string, updates: Partial<ChatStreamingState>) => void;
+  clearChatStreaming: (chatId: string) => void;
   
   // Firestore sync
   setUserId: (userId: string | null) => void;
@@ -74,9 +78,7 @@ const generateId = () => Math.random().toString(36).substring(2, 15);
 export const useChatStore = create<ChatState>((set, get) => ({
   chats: [],
   activeChatId: null,
-  isLoading: false,
-  streamingMessageId: null,
-  streamingStatus: null,
+  streamingChats: {},
   userId: null,
   isInitialSyncComplete: false,
 
@@ -312,20 +314,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  setLoading: (loading) => {
-    set({ isLoading: loading });
+  setChatStreaming: (chatId, streaming) => {
+    set((state) => ({
+      streamingChats: {
+        ...state.streamingChats,
+        [chatId]: streaming,
+      },
+    }));
   },
 
-  setStreamingMessageId: (id) => {
-    set({ streamingMessageId: id });
+  updateChatStreaming: (chatId, updates) => {
+    set((state) => {
+      const existing = state.streamingChats[chatId];
+      if (!existing) return state;
+
+      return {
+        streamingChats: {
+          ...state.streamingChats,
+          [chatId]: {
+            ...existing,
+            ...updates,
+          },
+        },
+      };
+    });
   },
 
-  setStreamingStatus: (status) => {
-    set({ streamingStatus: status });
+  clearChatStreaming: (chatId) => {
+    set((state) => {
+      if (!state.streamingChats[chatId]) return state;
+
+      const { [chatId]: _removed, ...remainingStreams } = state.streamingChats;
+      return { streamingChats: remainingStreams };
+    });
   },
 
   setUserId: (userId) => {
-    set({ userId, chats: [], activeChatId: null, isInitialSyncComplete: false });
+    set({
+      userId,
+      chats: [],
+      activeChatId: null,
+      streamingChats: {},
+      isInitialSyncComplete: false,
+    });
   },
 
   setChats: (chats) => {

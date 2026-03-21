@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import Image from "next/image";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   Sidebar,
   SidebarContent,
@@ -51,6 +52,7 @@ import { Badge } from "@/components/ui/badge";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { WindowControls } from "@/components/window-controls";
 import { useChatStore } from "@/lib/chat-store";
+import { getPickerModelIdFromLastAssistant } from "@/lib/chat-model-preference";
 import { useAuth } from "@/lib/auth-context";
 import { useElectron } from "@/lib/electron-context";
 import { useProvidersStore, ProviderType } from "@/lib/providers-store";
@@ -79,6 +81,8 @@ import {
   IconMoon,
   IconDeviceDesktop,
   IconDotsVertical,
+  IconPhoto,
+  IconLibrary,
 } from "@tabler/icons-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -111,6 +115,37 @@ const PROVIDER_INFO: Record<
     available: false,
   },
 };
+
+function ChatListIcon({
+  pinned,
+  isStreaming,
+}: {
+  pinned?: boolean;
+  isStreaming: boolean;
+}) {
+  return (
+    <div className="relative size-4 shrink-0">
+      {pinned ? (
+        <IconPin
+          className={`size-4 absolute inset-0 text-primary transition-all duration-200 ${
+            isStreaming ? "opacity-0 scale-75 -rotate-90" : "opacity-100 scale-100 rotate-0"
+          }`}
+        />
+      ) : (
+        <IconMessage
+          className={`size-4 absolute inset-0 transition-all duration-200 ${
+            isStreaming ? "opacity-0 scale-75 -rotate-90" : "opacity-100 scale-100 rotate-0"
+          }`}
+        />
+      )}
+      <IconLoader2
+        className={`size-4 absolute inset-0 text-primary transition-all duration-200 ${
+          isStreaming ? "opacity-100 scale-100 rotate-0 animate-spin" : "opacity-0 scale-75 rotate-90"
+        }`}
+      />
+    </div>
+  );
+}
 
 export function AppSidebar() {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -157,7 +192,7 @@ export function AppSidebar() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const { chats, activeChatId, createChat, setActiveChat, deleteChat, updateChatTitle, togglePinChat, getChatById } =
+  const { chats, activeChatId, streamingChats, createChat, setActiveChat, deleteChat, updateChatTitle, togglePinChat, getChatById } =
     useChatStore();
   const { state, openMobile } = useSidebar();
   const { user, loading, signInWithGoogle, signOut } = useAuth();
@@ -168,27 +203,19 @@ export function AppSidebar() {
   const { isElectron, platform } = useElectron();
   const isMacElectron = isElectron && platform === "darwin";
   const isCollapsed = state === "collapsed";
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const isOnNewChat = pathname === "/" && !searchParams.get("chatId");
 
   // Handle selecting a chat - also switches to the model used in the last message
-  const handleSelectChat = (chatId: string) => {
-    const chat = getChatById(chatId);
-    if (chat) {
-      // Find the last assistant message with a modelId
-      const lastAssistantMessage = [...chat.messages]
-        .reverse()
-        .find((m) => m.role === "assistant" && m.modelId);
-
-      if (lastAssistantMessage?.modelId) {
-        // Find the provider that has this model
-        const provider = providers.find((p) =>
-          p.models?.some((m) => m.id === lastAssistantMessage.modelId)
-        );
-        if (provider) {
-          setSelectedModel(provider.id, lastAssistantMessage.modelId);
-        }
-      }
-    }
+  const handleSelectChat = (e: React.MouseEvent, chatId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Update state immediately
     setActiveChat(chatId);
+    // Use setTimeout to ensure clean navigation without batching issues
+    setTimeout(() => router.push("/?chatId=" + chatId), 0);
   };
 
   // Load providers from Firestore when user logs in
@@ -255,10 +282,20 @@ export function AppSidebar() {
     syncSidebarScrollState(e.currentTarget);
   };
 
-  const handleNewChat = () => {
-    // Just navigate to empty state (no active chat)
-    // A new chat will be created when the first message is sent
+  const handleNewChat = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     setActiveChat(null);
+    // Use setTimeout to ensure clean navigation without batching issues
+    setTimeout(() => router.push("/"), 0);
+  };
+
+  const handlePromptLibrary = () => {
+    setTimeout(() => router.push("/prompts"), 0);
+  };
+
+  const handleImages = () => {
+    setTimeout(() => router.push("/images"), 0);
   };
 
   const handleHeaderClick = async () => {
@@ -369,99 +406,102 @@ export function AppSidebar() {
     }
   };
 
+  const renderAccountButton = () => (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          size="lg"
+          onClick={handleHeaderClick}
+          tooltip={user ? "Settings" : "Sign In with Google"}
+          className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground rounded-xl border border-sidebar-border/70 bg-sidebar/95 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-sidebar/80"
+        >
+          {loading ? (
+            <>
+              <Skeleton className="size-8 rounded-lg" />
+              <div className="grid flex-1 gap-1">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-3 w-24" />
+              </div>
+            </>
+          ) : user ? (
+            <>
+              {user.photoURL ? (
+                <Image
+                  src={user.photoURL}
+                  alt={user.displayName || "User"}
+                  width={32}
+                  height={32}
+                  className="size-8 rounded-lg"
+                />
+              ) : (
+                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                  <span className="text-sm font-bold">
+                    {user.displayName?.[0] || user.email?.[0] || "U"}
+                  </span>
+                </div>
+              )}
+              <div className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-semibold">
+                  {user.displayName || "User"}
+                </span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {user.email}
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                <IconLogin className="size-4" />
+              </div>
+              <div className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-semibold">
+                  Welcome to LocalChat
+                </span>
+                <span className="truncate text-xs text-muted-foreground">
+                  Click to Sign In
+                </span>
+              </div>
+            </>
+          )}
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+
   return (
     <>
       <Sidebar collapsible="offcanvas" onContextMenu={(e) => e.preventDefault()}>
-        <SidebarHeader
-          className="px-2 py-1"
-          onContextMenu={(e) => e.preventDefault()}
-          style={{ WebkitAppRegion: isMacElectron ? "drag" : undefined } as React.CSSProperties}
-        >
-          {/* Draggable area with window controls for macOS Electron */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
           {isMacElectron && (
-            <div className="flex items-center h-10 pl-[18px] pt-[6px] -mx-2 -mt-1 mb-[-6px]">
-              <div
-                className="z-50"
-                style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-              >
-                <WindowControls />
+            <SidebarHeader
+              className="px-2 py-1"
+              onContextMenu={(e) => e.preventDefault()}
+              style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+            >
+              {/* Draggable area with window controls for macOS Electron */}
+              <div className="flex items-center h-10 pl-[18px] pt-[6px] -mx-2 -mt-1 mb-[-6px]">
+                <div
+                  className="z-50"
+                  style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                >
+                  <WindowControls />
+                </div>
               </div>
-            </div>
+            </SidebarHeader>
           )}
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="lg"
-                onClick={handleHeaderClick}
-                tooltip={user ? "Settings" : "Sign In with Google"}
-                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground mb-1"
-                style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-              >
-                {loading ? (
-                  <>
-                    <Skeleton className="size-8 rounded-lg" />
-                    <div className="grid flex-1 gap-1">
-                      <Skeleton className="h-4 w-20" />
-                      <Skeleton className="h-3 w-24" />
-                    </div>
-                  </>
-                ) : user ? (
-                  <>
-                    {user.photoURL ? (
-                      <Image
-                        src={user.photoURL}
-                        alt={user.displayName || "User"}
-                        width={32}
-                        height={32}
-                        className="size-8 rounded-lg"
-                      />
-                    ) : (
-                      <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                        <span className="text-sm font-bold">
-                          {user.displayName?.[0] || user.email?.[0] || "U"}
-                        </span>
-                      </div>
-                    )}
-                    <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-semibold">
-                        {user.displayName || "User"}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {user.email}
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                      <IconLogin className="size-4" />
-                    </div>
-                    <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-semibold">
-                        Welcome to LocalChat
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        Click to Sign In
-                      </span>
-                    </div>
-                  </>
-                )}
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarHeader>
 
-        <SidebarContent
-          ref={sidebarContentRef}
-          onScroll={handleSidebarContentScroll}
-          onContextMenu={(e) => e.preventDefault()}
-        >
+          <SidebarContent
+            ref={sidebarContentRef}
+            onScroll={handleSidebarContentScroll}
+            onContextMenu={(e) => e.preventDefault()}
+          >
           {/* Sticky: New Chat + Search Chats */}
           <div
-            className={`sticky top-0 z-20 w-full min-w-0 shrink-0 border-b-[0.5px] bg-sidebar pb-1 transition-[box-shadow,border-color] duration-200 ease-out ${
+            className={`sticky top-0 z-20 w-full min-w-0 shrink-0 border-b-[0.5px] bg-sidebar pb-1 shadow-header-scroll transition-[box-shadow,border-color] duration-300 ease-out ${
               sidebarScrolled
-                ? "border-[oklch(0.86_0_0)] dark:border-sidebar-border shadow-[0_10px_28px_-8px_rgba(0,0,0,0.14),inset_0_-10px_14px_-12px_rgba(0,0,0,0.06)] dark:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.45),inset_0_-10px_16px_-12px_rgba(0,0,0,0.2)]"
-                : "border-transparent shadow-none"
+                ? "border-[oklch(0.86_0_0)] dark:border-sidebar-border shadow-header-scroll-on"
+                : "border-transparent"
             }`}
           >
             <SidebarGroup className="px-2 py-0">
@@ -471,26 +511,20 @@ export function AppSidebar() {
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       onClick={handleNewChat}
+                      isActive={isOnNewChat}
                       tooltip="New Chat"
-                      className={"bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground mb-2"}
+                      className="mb-1 rounded-lg shadow-none active:scale-[0.98] dark:hover:border-muted-foreground/45 dark:hover:bg-input/30 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                     >
                       <IconPlus className="size-4" />
-                      <span>New Chat</span>
+                      <span className="flex-1">New Chat</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-
-            <SidebarGroup className="px-2 py-0">
-              <SidebarGroupContent>
-                <SidebarMenu>
                   {/* Search Button */}
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       onClick={() => setSearchOpen(true)}
                       tooltip="Search Chats (⌘K)"
-                      className="text-muted-foreground hover:text-foreground mb-1"
+                      className="mb-1 rounded-lg shadow-none active:scale-[0.98] dark:hover:border-muted-foreground/45 dark:hover:bg-input/30 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                     >
                       <IconSearch className="size-4" />
                       <span className="flex-1">Search Chats</span>
@@ -505,10 +539,39 @@ export function AppSidebar() {
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
+
+            <SidebarGroup className="px-2 py-0">
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      onClick={handleImages}
+                      isActive={pathname === "/images"}
+                      tooltip="Images"
+                      className="mb-1 rounded-lg shadow-none active:scale-[0.98] dark:hover:border-muted-foreground/45 dark:hover:bg-input/30 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                    >
+                      <IconPhoto className="size-4" />
+                      <span className="flex-1">Images</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      onClick={handlePromptLibrary}
+                      isActive={pathname === "/prompts"}
+                      tooltip="Prompt Library"
+                      className="mb-1 rounded-lg shadow-none active:scale-[0.98] dark:hover:border-muted-foreground/45 dark:hover:bg-input/30 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                    >
+                      <IconLibrary className="size-4" />
+                      <span className="flex-1">Prompt Library</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
           </div>
 
           {/* Chat List */}
-          <SidebarGroup className="group-data-[collapsible=icon]:hidden flex-1 px-2 py-0" onContextMenu={(e) => e.stopPropagation()}>
+          <SidebarGroup className="group-data-[collapsible=icon]:hidden flex-1 px-2 py-0 pb-28" onContextMenu={(e) => e.stopPropagation()}>
             <SidebarGroupContent>
               <SidebarMenu>
                 {filteredChats.length === 0 ? (
@@ -516,137 +579,140 @@ export function AppSidebar() {
                     No chats yet
                   </p>
                 ) : (
-                  filteredChats.map((chat) => (
-                    <ContextMenu key={chat.id}>
-                      <ContextMenuTrigger asChild>
-                        <SidebarMenuItem>
-                          {editingChatId === chat.id ? (
-                            <SidebarMenuButton
-                              isActive={activeChatId === chat.id}
-                              className="cursor-default hover:bg-transparent mb-1"
-                            >
-                              {chat.pinned ? (
-                                <IconPin className="size-4 text-primary shrink-0" />
-                              ) : (
-                                <IconMessage className="size-4 shrink-0" />
-                              )}
-                              <input
-                                ref={editInputRef}
-                                value={editingTitle}
-                                onChange={(e) => setEditingTitle(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
+                  filteredChats.map((chat) => {
+                    const isChatStreaming = !!streamingChats[chat.id];
+
+	                    return (
+	                      <ContextMenu key={chat.id}>
+	                        <ContextMenuTrigger asChild>
+	                          <SidebarMenuItem>
+	                            {editingChatId === chat.id ? (
+	                              <SidebarMenuButton
+	                                isActive={activeChatId === chat.id}
+	                                className="cursor-default hover:bg-transparent mb-1"
+	                              >
+	                                <ChatListIcon pinned={chat.pinned} isStreaming={isChatStreaming} />
+	                                <input
+	                                  ref={editInputRef}
+	                                  value={editingTitle}
+                                  onChange={(e) => setEditingTitle(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      updateChatTitle(chat.id, editingTitle);
+                                      setEditingChatId(null);
+                                    } else if (e.key === "Escape") {
+                                      setEditingChatId(null);
+                                    }
+                                  }}
+                                  className="flex-1 bg-transparent border-none outline-none text-sm min-w-0"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     updateChatTitle(chat.id, editingTitle);
                                     setEditingChatId(null);
-                                  } else if (e.key === "Escape") {
+                                  }}
+                                  className="size-5 flex items-center justify-center rounded hover:bg-sidebar-accent shrink-0"
+                                >
+                                  <IconCheck className="size-4 text-green-600" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setEditingChatId(null);
-                                  }
-                                }}
-                                className="flex-1 bg-transparent border-none outline-none text-sm min-w-0"
-                              />
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  updateChatTitle(chat.id, editingTitle);
-                                  setEditingChatId(null);
-                                }}
-                                className="size-5 flex items-center justify-center rounded hover:bg-sidebar-accent shrink-0"
-                              >
-                                <IconCheck className="size-4 text-green-600" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setEditingChatId(null);
-                                }}
-                                className="size-5 flex items-center justify-center rounded hover:bg-sidebar-accent shrink-0"
-                              >
-                                <IconX className="size-4 text-muted-foreground" />
-                              </button>
-                            </SidebarMenuButton>
-                          ) : (
-                            <>
-                              <SidebarMenuButton
-                                isActive={activeChatId === chat.id}
-                                onClick={() => handleSelectChat(chat.id)}
-                                tooltip={chat.title}
-                                className="mb-1"
-                              >
-                                {chat.pinned ? (
-                                  <IconPin className="size-4 text-primary" />
-                                ) : (
-                                  <IconMessage className="size-4" />
-                                )}
-                                <span>{chat.title}</span>
+                                  }}
+                                  className="size-5 flex items-center justify-center rounded hover:bg-sidebar-accent shrink-0"
+                                >
+                                  <IconX className="size-4 text-muted-foreground" />
+                                </button>
                               </SidebarMenuButton>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <SidebarMenuAction showOnHover>
-                                    <IconDotsVertical className="size-4" />
-                                  </SidebarMenuAction>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent side="right" align="start" className="min-w-40">
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      setEditingChatId(chat.id);
-                                      setEditingTitle(chat.title);
-                                    }}
-                                  >
-                                    <IconPencil className="size-4 mr-2" />
-                                    Edit chat title
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() => togglePinChat(chat.id)}
-                                  >
-                                    <IconPin className="size-4 mr-2" />
-                                    {chat.pinned ? "Unpin chat" : "Pin chat"}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    variant="destructive"
-                                    onClick={() => setDeleteChatId(chat.id)}
-                                  >
-                                    <IconTrash className="size-4 mr-2" />
-                                    Delete chat
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </>
-                          )}
-                        </SidebarMenuItem>
-                      </ContextMenuTrigger>
-                      <ContextMenuContent>
-                        <ContextMenuItem
-                          onClick={() => {
-                            setEditingChatId(chat.id);
-                            setEditingTitle(chat.title);
-                          }}
-                        >
-                          <IconPencil className="size-4 mr-2" />
-                          Edit chat title
-                        </ContextMenuItem>
-                        <ContextMenuItem
-                          onClick={() => togglePinChat(chat.id)}
-                        >
-                          <IconPin className="size-4 mr-2" />
-                          {chat.pinned ? "Unpin chat" : "Pin chat"}
-                        </ContextMenuItem>
-                        <ContextMenuItem
-                          variant="destructive"
-                          onClick={() => setDeleteChatId(chat.id)}
-                        >
-                          <IconTrash className="size-4 mr-2" />
-                          Delete chat
-                        </ContextMenuItem>
-                      </ContextMenuContent>
-                    </ContextMenu>
-                  ))
+                            ) : (
+                              <>
+	                                <SidebarMenuButton
+	                                  isActive={activeChatId === chat.id}
+	                                  onClick={(e) => handleSelectChat(e, chat.id)}
+	                                  tooltip={chat.title}
+	                                  className="mb-1"
+	                                >
+	                                  <ChatListIcon pinned={chat.pinned} isStreaming={isChatStreaming} />
+	                                  <span className="flex-1 truncate">{chat.title}</span>
+	                                </SidebarMenuButton>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <SidebarMenuAction showOnHover>
+                                      <IconDotsVertical className="size-4" />
+                                    </SidebarMenuAction>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent side="right" align="start" className="min-w-40">
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setEditingChatId(chat.id);
+                                        setEditingTitle(chat.title);
+                                      }}
+                                    >
+                                      <IconPencil className="size-4 mr-2" />
+                                      Edit chat title
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => togglePinChat(chat.id)}
+                                    >
+                                      <IconPin className="size-4 mr-2" />
+                                      {chat.pinned ? "Unpin chat" : "Pin chat"}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      variant="destructive"
+                                      onClick={() => setDeleteChatId(chat.id)}
+                                    >
+                                      <IconTrash className="size-4 mr-2" />
+                                      Delete chat
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </>
+                            )}
+                          </SidebarMenuItem>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <ContextMenuItem
+                            onClick={() => {
+                              setEditingChatId(chat.id);
+                              setEditingTitle(chat.title);
+                            }}
+                          >
+                            <IconPencil className="size-4 mr-2" />
+                            Edit chat title
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={() => togglePinChat(chat.id)}
+                          >
+                            <IconPin className="size-4 mr-2" />
+                            {chat.pinned ? "Unpin chat" : "Pin chat"}
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            variant="destructive"
+                            onClick={() => setDeleteChatId(chat.id)}
+                          >
+                            <IconTrash className="size-4 mr-2" />
+                            Delete chat
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    );
+                  })
                 )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        </SidebarContent>
+          </SidebarContent>
+
+          <div className="pointer-events-none absolute inset-x-2 bottom-2 z-30">
+            <div className="pointer-events-auto rounded-2xl bg-gradient-to-t from-sidebar via-sidebar/95 to-transparent pt-8">
+              {renderAccountButton()}
+            </div>
+          </div>
+        </div>
       </Sidebar>
 
       {/* Settings Dialog */}

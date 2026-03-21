@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useChatStore } from "./chat-store";
+import { getPickerModelIdFromLastAssistant } from "./chat-model-preference";
 import { useProvidersStore } from "./providers-store";
 
 export function useChatUrlSync() {
@@ -19,16 +20,13 @@ export function useChatUrlSync() {
   const switchModelForChat = (chatId: string) => {
     const chat = getChatById(chatId);
     if (chat) {
-      const lastAssistantMessage = [...chat.messages]
-        .reverse()
-        .find((m) => m.role === "assistant" && m.modelId);
-      
-      if (lastAssistantMessage?.modelId) {
-        const provider = providers.find((p) => 
-          p.models?.some((m) => m.id === lastAssistantMessage.modelId)
+      const pickerModelId = getPickerModelIdFromLastAssistant(chat.messages);
+      if (pickerModelId) {
+        const provider = providers.find((p) =>
+          p.models?.some((m) => m.id === pickerModelId)
         );
         if (provider) {
-          setSelectedModel(provider.id, lastAssistantMessage.modelId);
+          setSelectedModel(provider.id, pickerModelId);
         }
       }
     }

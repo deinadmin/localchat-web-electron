@@ -143,7 +143,7 @@ export function ProviderIcon({ provider, className = "size-4", inverted = false 
   );
 }
 
-export function ModelPicker({ onOpenSettings }: { onOpenSettings?: () => void }) {
+export function ModelPicker({ onOpenSettings, showTooltip = true, size = "default" }: { onOpenSettings?: () => void; showTooltip?: boolean; size?: "default" | "large" }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
@@ -272,38 +272,48 @@ export function ModelPicker({ onOpenSettings }: { onOpenSettings?: () => void })
 
   // Use cleanName (parsed model name without provider prefix) for display
   const displayName = currentModelInfo?.cleanName || currentModelInfo?.modelName || selectedModel?.modelId || "Select a model";
-  const shortDisplayName = displayName.length > 30 
-    ? displayName.slice(0, 27) + "..." 
+  const shortDisplayName = displayName.length > 40 
+    ? displayName.slice(0, 37) + "..." 
     : displayName;
+
+  const buttonClass = size === "large" 
+    ? "gap-3 px-4 py-5 text-base"
+    : "gap-2 text-sm";
+
+  const button = (
+    <Button
+      variant="outline"
+      size="default"
+      className={`${buttonClass} active:scale-[0.98] transition-transform`}
+      onClick={() => setModalOpen(true)}
+    >
+      {currentModelInfo ? (
+        <ProviderIcon provider={currentModelInfo.modelProvider} className={size === "large" ? "size-5 shrink-0" : "size-4 shrink-0"} />
+      ) : (
+        <IconSparkles className={size === "large" ? "size-5 shrink-0" : "size-4 shrink-0"} />
+      )}
+      <span className="truncate">{shortDisplayName}</span>
+      <IconChevronDown className={size === "large" ? "size-4 shrink-0 opacity-50" : "size-3 shrink-0 opacity-50"} />
+    </Button>
+  );
 
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-2 max-w-[220px]"
-            onClick={() => setModalOpen(true)}
-          >
-            {currentModelInfo ? (
-              <ProviderIcon provider={currentModelInfo.modelProvider} className="size-4 shrink-0" />
-            ) : (
-              <IconSparkles className="size-4 shrink-0" />
-            )}
-            <span className="truncate">{shortDisplayName}</span>
-            <IconChevronDown className="size-3 shrink-0 opacity-50" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" className="flex items-center gap-2">
-          Select Model
-          <KbdGroup>
-            <Kbd>⌘</Kbd>
-            <Kbd>⇧</Kbd>
-            <Kbd>M</Kbd>
-          </KbdGroup>
-        </TooltipContent>
-      </Tooltip>
+      {showTooltip ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {button}
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex items-center gap-2">
+            Select Model
+            <KbdGroup>
+              <Kbd>⌘</Kbd>
+              <Kbd>⇧</Kbd>
+              <Kbd>M</Kbd>
+            </KbdGroup>
+          </TooltipContent>
+        </Tooltip>
+      ) : button}
 
       <ModelPickerModal open={modalOpen} onOpenChange={setModalOpen} />
     </>

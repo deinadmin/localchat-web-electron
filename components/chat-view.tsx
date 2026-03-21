@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo, useCallback, memo, createContext, useContext, FormEvent, KeyboardEvent, ReactNode } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, createContext, useContext, FormEvent, KeyboardEvent, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import {
@@ -35,10 +35,13 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Kbd } from "@/components/ui/kbd";
+import { TitleBar } from "@/components/title-bar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useChatStore, Message, UrlCitation, StreamingStatus } from "@/lib/chat-store";
 import { useProvidersStore } from "@/lib/providers-store";
 import { parseModelName, ProviderIcon, ModelProvider } from "@/components/model-picker";
+import { ModelPicker } from "@/components/model-picker";
 import { useAuth } from "@/lib/auth-context";
 import { getProviderApiKey } from "@/lib/firestore-providers";
 import { streamChat, ChatMessage } from "@/lib/openrouter";
@@ -362,17 +365,139 @@ function SourcesModal({
 }
 
 // Expandable thinking/reasoning block with live timer
+const ENTER_KEYFRAMES: Keyframe[] = [
+  { opacity: 0, filter: 'blur(5px)', transform: 'translateY(6px)' },
+  { opacity: 1, filter: 'blur(0px)', transform: 'translateY(0)' },
+];
+const ENTER_OPTIONS: KeyframeAnimationOptions = {
+  duration: 260,
+  easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+  fill: 'forwards',
+};
+// Exit: fade + blur in place, no positional movement
+const EXIT_KEYFRAMES: Keyframe[] = [
+  { opacity: 1, filter: 'blur(0px)' },
+  { opacity: 0, filter: 'blur(4px)' },
+];
+const EXIT_OPTIONS: KeyframeAnimationOptions = {
+  duration: 140,
+  easing: 'ease-in',
+  fill: 'forwards',
+};
+
+/**
+ * useLayoutEffect runs synchronously after React commits to the DOM but BEFORE
+ * the browser paints. This means setting opacity: 0 here never causes a visible
+ * flash — unlike useEffect which runs after paint.
+ */
+function useEnterAnimation(animate: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!animate) return; // historical message — appear instantly, no animation
+    const el = ref.current;
+    if (!el) return;
+    el.style.opacity = '0';
+    const anim = el.animate(ENTER_KEYFRAMES, ENTER_OPTIONS);
+    anim.finished.then(() => {
+      el.style.opacity = '';
+      el.style.filter = '';
+      el.style.transform = '';
+    }).catch(() => {});
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  return ref;
+}
+
+/**
+ * Manages enter/exit animations for mutually-exclusive status slots.
+ *
+ * - First appearance (null → key): shown instantly, no animation, because
+ *   the containing message bubble already slides in.
+ * - Transition (key → key): old content blurs up & out, new content blurs in.
+ * - Disappear (key → null): content blurs up & out, then unmounts.
+ *
+ * Uses useLayoutEffect for the enter so opacity is forced to 0 before the
+ * browser paints, eliminating the "flash then animate" artifact.
+ */
+function FadeSlot({ slotKey, children }: { slotKey: string | null; children: ReactNode }) {
+  // Initialize immediately from slotKey so first appearance needs no animation
+  const [shown, setShown] = useState<{ key: string; content: ReactNode } | null>(
+    slotKey ? { key: slotKey, content: children } : null
+  );
+  const ref = useRef<HTMLDivElement>(null);
+  const activeAnim = useRef<Animation | null>(null);
+  // Initialized to slotKey so the layoutEffect skips animating the first render
+  const prevSlotKey = useRef<string | null>(slotKey);
+  // Signal from the regular effect to the layout effect: "play enter on next commit"
+  const pendingEnter = useRef(false);
+
+  // Respond to slotKey changes: play exit on old content, then swap content.
+  // useLayoutEffect so height collapse happens before the browser paints —
+  // this prevents the sibling ThinkingBlock from starting its enter animation
+  // at the wrong Y position and then jumping when FadeSlot unmounts.
+  useLayoutEffect(() => {
+    if (slotKey === prevSlotKey.current) return;
+    const prev = prevSlotKey.current;
+    prevSlotKey.current = slotKey;
+    const el = ref.current;
+
+    const swap = (withEnter: boolean) => {
+      pendingEnter.current = withEnter && !!slotKey;
+      // Restore height so the new content renders normally
+      if (el) { el.style.height = ''; el.style.overflow = ''; }
+      if (!slotKey) { setShown(null); return; }
+      setShown({ key: slotKey, content: children });
+    };
+
+    if (prev && el) {
+      // Collapse layout height to 0 immediately (before paint) so the next
+      // sibling (ThinkingBlock) renders at the correct Y position right away.
+      // overflow:visible lets the content still be seen fading out as an overlay.
+      el.style.height = '0';
+      el.style.overflow = 'visible';
+
+      activeAnim.current?.cancel();
+      activeAnim.current = el.animate(EXIT_KEYFRAMES, EXIT_OPTIONS);
+      activeAnim.current.finished.then(() => swap(true)).catch(() => swap(true));
+    } else {
+      // First appearance: show instantly (slides in with the message bubble)
+      swap(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotKey]);
+
+  // Play enter animation synchronously before the browser paints the new content
+  useLayoutEffect(() => {
+    if (!shown || !pendingEnter.current) return;
+    pendingEnter.current = false;
+    const el = ref.current;
+    if (!el) return;
+    activeAnim.current?.cancel();
+    el.style.opacity = '0'; // hide before first paint — no flash
+    activeAnim.current = el.animate(ENTER_KEYFRAMES, ENTER_OPTIONS);
+    activeAnim.current.finished
+      .then(() => { if (el) { el.style.opacity = ''; el.style.filter = ''; el.style.transform = ''; } })
+      .catch(() => {});
+  }, [shown?.key]);
+
+  if (!shown) return null;
+
+  return <div ref={ref}>{shown.content}</div>;
+}
+
 const ThinkingBlock = memo(function ThinkingBlock({
   reasoning,
   isThinking,
   thinkingDuration,
   thinkingStartTime,
+  animateIn,
 }: {
   reasoning: string;
   isThinking: boolean;
   thinkingDuration?: number;
   thinkingStartTime: number | null;
+  animateIn: boolean;
 }) {
+  const containerRef = useEnterAnimation(animateIn);
   const [expanded, setExpanded] = useState(false);
   const [elapsed, setElapsed] = useState(0);
 
@@ -401,18 +526,17 @@ const ThinkingBlock = memo(function ThinkingBlock({
     : `Thought for ${timeStr || '< 1s'}`;
 
   return (
-    <div className="mb-2">
+    <div ref={containerRef} className="mb-2">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="group/think flex items-center gap-1.5 text-sm cursor-pointer select-none"
+        className="group/think flex h-6 items-center gap-1.5 cursor-pointer select-none bg-transparent p-0 border-0"
       >
-        <span
-          className={isThinking ? 'shimmer-text' : 'text-muted-foreground'}
-          data-text={label}
-        >
-          {label}
-        </span>
+        {isThinking ? (
+          <span className="unified-shimmer-text text-sm">{label}</span>
+        ) : (
+          <span className="text-sm text-muted-foreground">{label}</span>
+        )}
         <IconChevronRight
           className={`size-3.5 transition-all duration-200 ${
             expanded ? 'rotate-90 opacity-100' : 'opacity-0 group-hover/think:opacity-100'
@@ -434,7 +558,7 @@ const ThinkingBlock = memo(function ThinkingBlock({
   );
 });
 
-// Status line for connecting/searching phases
+// Status line for connecting/searching phases — animation is owned by FadeSlot wrapper
 function StreamingStatusLine({ status }: { status: StreamingStatus }) {
   const text =
     status === 'connecting' ? 'Connecting to OpenRouter...'
@@ -444,10 +568,8 @@ function StreamingStatusLine({ status }: { status: StreamingStatus }) {
   if (!text) return null;
 
   return (
-    <div className="mb-2 animate-status-fade-in" key={status}>
-      <span className="shimmer-text text-sm" data-text={text}>
-        {text}
-      </span>
+    <div className="mb-2 select-none flex h-6 items-center">
+      <span className="unified-shimmer-text text-sm">{text}</span>
     </div>
   );
 }
@@ -812,8 +934,8 @@ const MessageBubble = memo(function MessageBubble({
           onContextMenu={handleContextMenu}
         >
           <div
-            className={`select-text min-w-0 ${isUser
-              ? "max-w-[80%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5"
+            className={`min-w-0 ${isUser
+              ? "select-text max-w-[80%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5"
               : "group/message w-full px-1"
               }`}
           >
@@ -859,8 +981,8 @@ const MessageBubble = memo(function MessageBubble({
                 {/* Error state */}
                 {message.error ? (
                   <>
-                    <div className="flex items-center gap-2 text-sm text-destructive">
-                      <IconAlertTriangle className="size-4" />
+                    <div className="flex items-center gap-2 text-sm text-destructive select-text cursor-text">
+                      <IconAlertTriangle className="size-4 shrink-0" />
                       <span>{message.error}</span>
                     </div>
                     {/* Action buttons for error state - same layout as normal messages */}
@@ -942,7 +1064,8 @@ const MessageBubble = memo(function MessageBubble({
                         onClick={onDelete}
                         className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive rounded-xl active:scale-95 transition-all duration-200"
                       >
-                        <IconTrash className="size-3.5" />
+                        <IconTrash className="size-3.5 mr-1" />
+                        Delete
                       </Button>
                     </div>
                   </>
@@ -956,13 +1079,16 @@ const MessageBubble = memo(function MessageBubble({
                           isThinking={!!isStreaming && streamingStatus === 'thinking'}
                           thinkingDuration={message.thinkingDuration}
                           thinkingStartTime={thinkingStartTime ?? null}
+                          animateIn={!!isStreaming}
                         />
                       )}
 
                       {/* Status line for connecting/searching phases */}
-                      {isStreaming && !message.content && streamingStatus !== 'thinking' && (
+                      <FadeSlot
+                        slotKey={isStreaming && !message.content && streamingStatus !== 'thinking' ? (streamingStatus ?? null) : null}
+                      >
                         <StreamingStatusLine status={streamingStatus ?? null} />
-                      )}
+                      </FadeSlot>
 
                       <div className="prose prose-sm dark:prose-invert max-w-none min-w-0 prose-p:leading-relaxed prose-code:before:content-none prose-code:after:content-none select-text cursor-text">
                         {message.content ? (
@@ -1087,7 +1213,8 @@ const MessageBubble = memo(function MessageBubble({
                           onClick={onDelete}
                           className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive rounded-xl active:scale-95 transition-all duration-200"
                         >
-                          <IconTrash className="size-3.5" />
+                          <IconTrash className="size-3.5 mr-1" />
+                          Delete
                         </Button>
                       </div>
                     )}
@@ -1213,15 +1340,19 @@ const MessageBubble = memo(function MessageBubble({
 
 function EmptyState() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center text-center pb-32">
-      <div className="rounded-full bg-muted p-4 mb-4">
-        <IconMessagePlus className="size-8 text-muted-foreground" />
+    <>
+      <TitleBar />
+      <div className="flex flex-1 flex-col items-center justify-center text-center pb-32">
+        <div className="rounded-full bg-muted p-4 mb-4">
+          <IconMessagePlus className="size-8 text-muted-foreground" />
+        </div>
+        <h2 className="text-xl font-semibold mb-4">Start a new conversation with</h2>
+        <ModelPicker showTooltip={false} size="large" />
+        <p className="text-muted-foreground max-w-lg mt-4 flex items-center gap-1">
+          Press <Kbd className="text-[10px] px-1.5 py-0.5">⌘</Kbd><Kbd className="text-[10px] px-1.5 py-0.5">⇧</Kbd><Kbd className="text-[10px] px-1.5 py-0.5">M</Kbd> to open Model Picker
+        </p>
       </div>
-      <h2 className="text-xl font-semibold mb-2">Start a new conversation</h2>
-      <p className="text-muted-foreground max-w-sm">
-        Type a message below to begin chatting with the AI assistant.
-      </p>
-    </div>
+    </>
   );
 }
 
@@ -1497,26 +1628,37 @@ export function ChatView() {
   const [deleteMessageId, setDeleteMessageId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   /** Message IDs present when this chat was opened; only animate user messages not in this set (i.e. sent this session) */
   const initialMessageIdsRef = useRef<Set<string>>(new Set());
+  /** Track last seen chatId so we can update the snapshot synchronously during render */
+  const lastSnapshotChatIdRef = useRef<string | null>(null);
 
   const { user } = useAuth();
   const { setIsScrolled } = useScroll();
   const { fullWidthChat, showEstimatedCost, webSearchEnabled } = useLocalSettingsStore();
 
-  const thinkingStartTimeRef = useRef<number | null>(null);
-
   // Use separate selectors for better performance - only subscribe to what we need
   const activeChatId = useChatStore((state) => state.activeChatId);
-  const isLoading = useChatStore((state) => state.isLoading);
-  const streamingMessageId = useChatStore((state) => state.streamingMessageId);
-  const streamingStatus = useChatStore((state) => state.streamingStatus);
+  const activeStream = useChatStore(
+    useCallback((state) => {
+      if (!state.activeChatId) return null;
+      return state.streamingChats[state.activeChatId] ?? null;
+    }, [])
+  );
 
   // Use a memoized selector for activeChat to prevent unnecessary re-renders
   const activeChat = useChatStore(
     useCallback((state) => state.chats.find((c) => c.id === state.activeChatId), [])
   );
+
+  // Snapshot message IDs synchronously during render (not in useEffect) so that
+  // the very first render of a newly-opened chat already has all existing IDs
+  // in the set, preventing them from being mistaken as "just sent" and animated.
+  if (activeChatId !== lastSnapshotChatIdRef.current) {
+    lastSnapshotChatIdRef.current = activeChatId ?? null;
+    initialMessageIdsRef.current = new Set(activeChat?.messages.map((m) => m.id) ?? []);
+  }
 
   // Get store actions (these are stable references)
   const {
@@ -1531,12 +1673,16 @@ export function ChatView() {
     updateMessageModel,
     setMessageError,
     setMessageAnnotations,
-    setLoading,
-    setStreamingMessageId,
-    setStreamingStatus,
+    setChatStreaming,
+    updateChatStreaming,
+    clearChatStreaming,
   } = useChatStore();
 
   const { selectedModel, providers, setSelectedModel } = useProvidersStore();
+  const isActiveChatStreaming = !!activeStream;
+  const activeStreamingMessageId = activeStream?.messageId ?? null;
+  const activeStreamingStatus = activeStream?.status ?? null;
+  const activeThinkingStartTime = activeStream?.thinkingStartTime ?? null;
 
   // Memoize message count and last message content for scroll effect
   const messageCount = activeChat?.messages.length ?? 0;
@@ -1553,13 +1699,6 @@ export function ChatView() {
   useEffect(() => {
     textareaRef.current?.focus();
   }, [activeChatId]);
-
-  // Snapshot message IDs when opening a chat so we only animate messages sent after open (not on load/hot reload)
-  useEffect(() => {
-    if (activeChatId && activeChat) {
-      initialMessageIdsRef.current = new Set(activeChat.messages.map((m) => m.id));
-    }
-  }, [activeChatId]); // intentionally not activeChat.messages — only reset when switching chats
 
   // Track scroll position for header border
   useEffect(() => {
@@ -1580,25 +1719,197 @@ export function ChatView() {
     return () => scrollElement.removeEventListener("scroll", handleScroll);
   }, [setIsScrolled, activeChatId]);
 
-  const handleStop = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+  useEffect(() => {
+    return () => {
+      abortControllersRef.current.forEach((controller) => controller.abort());
+      abortControllersRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (user) return;
+
+    abortControllersRef.current.forEach((controller) => controller.abort());
+    abortControllersRef.current.clear();
+  }, [user]);
+
+  const isCurrentStream = useCallback((chatId: string, messageId: string) => {
+    return useChatStore.getState().streamingChats[chatId]?.messageId === messageId;
+  }, []);
+
+  const finalizeThinkingPhase = useCallback(
+    (chatId: string, messageId: string) => {
+      const currentStream = useChatStore.getState().streamingChats[chatId];
+      if (!currentStream || currentStream.messageId !== messageId || !currentStream.thinkingStartTime) {
+        return;
+      }
+
+      const duration = Math.floor((Date.now() - currentStream.thinkingStartTime) / 1000);
+      setMessageThinkingDuration(chatId, messageId, duration);
+      updateChatStreaming(chatId, { thinkingStartTime: null });
+    },
+    [setMessageThinkingDuration, updateChatStreaming]
+  );
+
+  const finishStream = useCallback(
+    (chatId: string, messageId: string) => {
+      if (!isCurrentStream(chatId, messageId)) return;
+      abortControllersRef.current.delete(chatId);
+      clearChatStreaming(chatId);
+    },
+    [clearChatStreaming, isCurrentStream]
+  );
+
+  const startAssistantStream = useCallback(
+    async ({
+      chatId,
+      assistantMessageId,
+      messages,
+      modelId,
+      providerId,
+      requestedModelId,
+    }: {
+      chatId: string;
+      assistantMessageId: string;
+      messages: ChatMessage[];
+      modelId: string;
+      providerId: string;
+      requestedModelId?: string;
+    }) => {
+      if (!user) return;
+
+      const abortController = new AbortController();
+      abortControllersRef.current.set(chatId, abortController);
+      setChatStreaming(chatId, {
+        messageId: assistantMessageId,
+        status: "connecting",
+        thinkingStartTime: null,
+      });
+
+      try {
+        const apiKey = await getProviderApiKey(user.uid, providerId);
+
+        if (!isCurrentStream(chatId, assistantMessageId) || abortController.signal.aborted) {
+          return;
+        }
+
+        if (!apiKey) {
+          const message = "API key not found. Please reconfigure your provider.";
+          toast.error(message);
+          setMessageError(chatId, assistantMessageId, message);
+          finishStream(chatId, assistantMessageId);
+          return;
+        }
+
+        const plugins = webSearchEnabled ? [{ id: "web" }] : undefined;
+
+        await streamChat({
+          messages,
+          model: modelId,
+          apiKey,
+          plugins,
+          onChunk: (chunk) => {
+            if (!isCurrentStream(chatId, assistantMessageId)) return;
+            appendToMessage(chatId, assistantMessageId, chunk);
+          },
+          onModel: (actualModel) => {
+            if (!isCurrentStream(chatId, assistantMessageId)) return;
+            if (requestedModelId && actualModel !== requestedModelId) {
+              updateMessageModel(chatId, assistantMessageId, actualModel);
+            }
+          },
+          onAnnotations: (annotations) => {
+            if (!isCurrentStream(chatId, assistantMessageId)) return;
+            setMessageAnnotations(chatId, assistantMessageId, annotations);
+          },
+          onStatusChange: (status) => {
+            if (!isCurrentStream(chatId, assistantMessageId)) return;
+
+            const currentStream = useChatStore.getState().streamingChats[chatId];
+            if (!currentStream) return;
+
+            if (status === "thinking" && !currentStream.thinkingStartTime) {
+              updateChatStreaming(chatId, {
+                status,
+                thinkingStartTime: Date.now(),
+              });
+              return;
+            }
+
+            if (currentStream.status === "thinking" && status !== "thinking") {
+              finalizeThinkingPhase(chatId, assistantMessageId);
+              updateChatStreaming(chatId, {
+                status,
+                thinkingStartTime: null,
+              });
+              return;
+            }
+
+            updateChatStreaming(chatId, { status });
+          },
+          onReasoning: (chunk) => {
+            if (!isCurrentStream(chatId, assistantMessageId)) return;
+            appendToMessageReasoning(chatId, assistantMessageId, chunk);
+          },
+          onDone: () => {
+            if (!isCurrentStream(chatId, assistantMessageId)) return;
+            finalizeThinkingPhase(chatId, assistantMessageId);
+            finishStream(chatId, assistantMessageId);
+          },
+          onError: (error) => {
+            if (!isCurrentStream(chatId, assistantMessageId)) return;
+            finalizeThinkingPhase(chatId, assistantMessageId);
+            setMessageError(chatId, assistantMessageId, error.message);
+            finishStream(chatId, assistantMessageId);
+          },
+          signal: abortController.signal,
+        });
+      } catch (error) {
+        if (!isCurrentStream(chatId, assistantMessageId)) return;
+
+        const errorMessage = error instanceof Error ? error.message : "Something went wrong";
+        finalizeThinkingPhase(chatId, assistantMessageId);
+        setMessageError(chatId, assistantMessageId, errorMessage);
+        finishStream(chatId, assistantMessageId);
+      }
+    },
+    [
+      user,
+      webSearchEnabled,
+      appendToMessage,
+      appendToMessageReasoning,
+      finishStream,
+      finalizeThinkingPhase,
+      isCurrentStream,
+      setChatStreaming,
+      setMessageAnnotations,
+      setMessageError,
+      updateChatStreaming,
+      updateMessageModel,
+    ]
+  );
+
+  const handleStop = useCallback(() => {
+    if (!activeChatId || !activeStream) return;
+
+    const controller = abortControllersRef.current.get(activeChatId);
+    if (controller) {
+      controller.abort();
+      abortControllersRef.current.delete(activeChatId);
     }
-    if (thinkingStartTimeRef.current && streamingMessageId && activeChatId) {
-      const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
-      setMessageThinkingDuration(activeChatId, streamingMessageId, duration);
-      thinkingStartTimeRef.current = null;
+
+    if (activeStream.thinkingStartTime) {
+      const duration = Math.floor((Date.now() - activeStream.thinkingStartTime) / 1000);
+      setMessageThinkingDuration(activeChatId, activeStream.messageId, duration);
     }
-    setStreamingStatus(null);
-    setStreamingMessageId(null);
-    setLoading(false);
-  };
+
+    clearChatStreaming(activeChatId);
+  }, [activeChatId, activeStream, clearChatStreaming, setMessageThinkingDuration]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isActiveChatStreaming) return;
 
     // Check if user is logged in
     if (!user) {
@@ -1627,114 +1938,35 @@ export function ChatView() {
 
     // Create placeholder and show loading dots immediately (before async API key fetch)
     const assistantMessageId = Math.random().toString(36).substring(2, 15);
-    const isAutoRouter = selectedModel.modelId === "openrouter/auto";
+    const modelId = selectedModel.modelId;
+    const providerId = selectedModel.providerId;
+    const isAutoRouter = modelId === "openrouter/auto";
     addMessageWithId(chatId, {
       id: assistantMessageId,
       role: "assistant",
       content: "",
-      modelId: selectedModel.modelId,
-      ...(isAutoRouter && { requestedModelId: selectedModel.modelId }),
+      modelId,
+      ...(isAutoRouter && { requestedModelId: modelId }),
     });
-    setStreamingMessageId(assistantMessageId);
-    setStreamingStatus('connecting');
-    thinkingStartTimeRef.current = null;
-    setLoading(true);
 
-    try {
-      const apiKey = await getProviderApiKey(user.uid, selectedModel.providerId);
-
-      if (!apiKey) {
-        toast.error("API key not found. Please reconfigure your provider.");
-        setLoading(false);
-        setStreamingStatus(null);
-        setStreamingMessageId(null);
-        return;
-      }
-
-      // Build message history for context
-      const currentChat = useChatStore.getState().chats.find((c) => c.id === chatId);
-      const messageHistory: ChatMessage[] =
-        currentChat?.messages.map((m) => ({
-          role: m.role,
-          content: m.content,
+    // Build message history for context, excluding the placeholder assistant message.
+    const currentChat = useChatStore.getState().chats.find((c) => c.id === chatId);
+    const messageHistory: ChatMessage[] =
+      currentChat?.messages
+        .filter((message) => message.id !== assistantMessageId)
+        .map((message) => ({
+          role: message.role,
+          content: message.content,
         })) || [];
 
-      // Create abort controller for cancellation
-      abortControllerRef.current = new AbortController();
-
-      // Stream the response
-      const webSearchPlugins = webSearchEnabled ? [{ id: "web" }] : undefined;
-
-      await streamChat({
-        messages: messageHistory,
-        model: selectedModel.modelId,
-        apiKey,
-        plugins: webSearchPlugins,
-        onChunk: (chunk) => {
-          appendToMessage(chatId!, assistantMessageId, chunk);
-        },
-        onModel: (actualModel) => {
-          if (isAutoRouter && actualModel !== selectedModel.modelId) {
-            updateMessageModel(chatId!, assistantMessageId, actualModel);
-          }
-        },
-        onAnnotations: (annotations) => {
-          setMessageAnnotations(chatId!, assistantMessageId, annotations);
-        },
-        onStatusChange: (status) => {
-          if (status === 'thinking' && !thinkingStartTimeRef.current) {
-            thinkingStartTimeRef.current = Date.now();
-          }
-          const prevStatus = useChatStore.getState().streamingStatus;
-          if (prevStatus === 'thinking' && status !== 'thinking' && thinkingStartTimeRef.current) {
-            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
-            setMessageThinkingDuration(chatId!, assistantMessageId, duration);
-            thinkingStartTimeRef.current = null;
-          }
-          setStreamingStatus(status);
-        },
-        onReasoning: (chunk) => {
-          appendToMessageReasoning(chatId!, assistantMessageId, chunk);
-        },
-        onDone: () => {
-          if (thinkingStartTimeRef.current) {
-            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
-            setMessageThinkingDuration(chatId!, assistantMessageId, duration);
-            thinkingStartTimeRef.current = null;
-          }
-          setStreamingStatus(null);
-          setStreamingMessageId(null);
-          setLoading(false);
-        },
-        onError: (error) => {
-          if (thinkingStartTimeRef.current) {
-            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
-            setMessageThinkingDuration(chatId!, assistantMessageId, duration);
-            thinkingStartTimeRef.current = null;
-          }
-          setMessageError(chatId!, assistantMessageId, error.message);
-          setStreamingStatus(null);
-          setStreamingMessageId(null);
-          setLoading(false);
-        },
-        signal: abortControllerRef.current.signal,
-      });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Something went wrong";
-      if (chatId) {
-        const currentChat = useChatStore.getState().chats.find((c) => c.id === chatId);
-        const lastMessage = currentChat?.messages[currentChat.messages.length - 1];
-        if (lastMessage && lastMessage.role === "assistant") {
-          setMessageError(chatId, lastMessage.id, errorMessage);
-        }
-      }
-      if (thinkingStartTimeRef.current) {
-        thinkingStartTimeRef.current = null;
-      }
-      setStreamingStatus(null);
-      setLoading(false);
-      setStreamingMessageId(null);
-    }
+    await startAssistantStream({
+      chatId,
+      assistantMessageId,
+      messages: messageHistory,
+      modelId,
+      providerId,
+      requestedModelId: isAutoRouter ? modelId : undefined,
+    });
   };
 
   // Memoized callbacks for MessageBubble to prevent unnecessary re-renders
@@ -1770,7 +2002,7 @@ export function ChatView() {
         <FloatingInput
           input={input}
           setInput={setInput}
-          isLoading={isLoading}
+          isLoading={isActiveChatStreaming}
           onSubmit={handleSubmit}
           onStop={handleStop}
           textareaRef={textareaRef}
@@ -1783,32 +2015,33 @@ export function ChatView() {
   return (
     <div className="relative flex flex-1 flex-col bg-background overflow-hidden">
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden" ref={scrollRef}>
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pt-12" ref={scrollRef}>
         <div className={`mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-28 sm:pb-32 min-w-0 ${fullWidthChat ? "" : "max-w-3xl"}`}>
           {activeChat?.messages.length === 0 ? (
-            <div className="flex h-[50vh] items-center justify-center">
-              <p className="text-muted-foreground">
-                Send a message to start the conversation
-              </p>
-            </div>
+            <EmptyState />
           ) : (
-            activeChat?.messages.map((message, index) => {
+            <>
+              {/* Chat Header with ModelPicker */}
+              <TitleBar>
+                <ModelPicker />
+              </TitleBar>
+              {activeChat?.messages.map((message, index) => {
               const isNewest = index === (activeChat?.messages.length ?? 0) - 1;
               const wasJustSent =
                 message.role === "user" && !initialMessageIdsRef.current.has(message.id);
               const isStreamingPlaceholder =
                 isNewest &&
                 message.role === "assistant" &&
-                streamingMessageId === message.id &&
+                activeStreamingMessageId === message.id &&
                 !message.content;
               const shouldAnimateIn = wasJustSent || isStreamingPlaceholder;
-              const isThisStreaming = streamingMessageId === message.id;
+              const isThisStreaming = activeStreamingMessageId === message.id;
               const bubble = (
                 <MessageBubble
                 message={message}
                 isStreaming={isThisStreaming}
-                streamingStatus={isThisStreaming ? streamingStatus : undefined}
-                thinkingStartTime={isThisStreaming ? thinkingStartTimeRef.current : null}
+                streamingStatus={isThisStreaming ? activeStreamingStatus : undefined}
+                thinkingStartTime={isThisStreaming ? activeThinkingStartTime : null}
                 isEditing={editingMessageId === message.id}
                 editingContent={editingMessageId === message.id ? editingContent : undefined}
                 onEditStart={() => {
@@ -1831,6 +2064,11 @@ export function ChatView() {
                 onRegenerate={() => {
                   // Find the last user message before this AI message and regenerate
                   if (activeChatId && message.role === "assistant") {
+                    if (activeStream) {
+                      toast.info("Stop the current response before regenerating this chat.");
+                      return;
+                    }
+
                     // Delete this message and all messages after it
                     const messageIndex = activeChat.messages.findIndex(m => m.id === message.id);
                     const messagesToDelete = activeChat.messages.slice(messageIndex);
@@ -1854,6 +2092,11 @@ export function ChatView() {
                 onRegenerateWithModel={async (modelId) => {
                   // Regenerate this message with the selected model
                   if (activeChatId && message.role === "assistant") {
+                    if (activeStream) {
+                      toast.info("Stop the current response before regenerating this chat.");
+                      return;
+                    }
+
                     // Find the provider for this model
                     const provider = providers.find(p =>
                       p.models?.some(m => m.id === modelId)
@@ -1866,12 +2109,6 @@ export function ChatView() {
                     // Get the API key
                     if (!user) {
                       toast.error("Please sign in");
-                      return;
-                    }
-
-                    const apiKey = await getProviderApiKey(user.uid, provider.id);
-                    if (!apiKey) {
-                      toast.error("API key not found");
                       return;
                     }
 
@@ -1909,84 +2146,14 @@ export function ChatView() {
                       ...(isAutoRouter && { requestedModelId: modelId }),
                     });
 
-                    setLoading(true);
-                    setStreamingMessageId(newAssistantMessageId);
-                    setStreamingStatus('connecting');
-                    thinkingStartTimeRef.current = null;
-
-                    // Abort any existing request
-                    if (abortControllerRef.current) {
-                      abortControllerRef.current.abort();
-                    }
-                    abortControllerRef.current = new AbortController();
-
-                    try {
-                      const regenPlugins = webSearchEnabled ? [{ id: "web" }] : undefined;
-
-                      await streamChat({
-                        messages: apiMessages,
-                        model: modelId,
-                        apiKey,
-                        plugins: regenPlugins,
-                        onChunk: (content: string) => {
-                          appendToMessage(activeChatId, newAssistantMessageId, content);
-                        },
-                        onModel: (actualModel: string) => {
-                          if (isAutoRouter && actualModel !== modelId) {
-                            updateMessageModel(activeChatId, newAssistantMessageId, actualModel);
-                          }
-                        },
-                        onAnnotations: (annotations) => {
-                          setMessageAnnotations(activeChatId, newAssistantMessageId, annotations);
-                        },
-                        onStatusChange: (status) => {
-                          if (status === 'thinking' && !thinkingStartTimeRef.current) {
-                            thinkingStartTimeRef.current = Date.now();
-                          }
-                          const prevStatus = useChatStore.getState().streamingStatus;
-                          if (prevStatus === 'thinking' && status !== 'thinking' && thinkingStartTimeRef.current) {
-                            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
-                            setMessageThinkingDuration(activeChatId, newAssistantMessageId, duration);
-                            thinkingStartTimeRef.current = null;
-                          }
-                          setStreamingStatus(status);
-                        },
-                        onReasoning: (chunk: string) => {
-                          appendToMessageReasoning(activeChatId, newAssistantMessageId, chunk);
-                        },
-                        onDone: () => {
-                          if (thinkingStartTimeRef.current) {
-                            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
-                            setMessageThinkingDuration(activeChatId, newAssistantMessageId, duration);
-                            thinkingStartTimeRef.current = null;
-                          }
-                          setStreamingStatus(null);
-                          setStreamingMessageId(null);
-                          setLoading(false);
-                        },
-                        onError: (error: Error) => {
-                          if (thinkingStartTimeRef.current) {
-                            const duration = Math.floor((Date.now() - thinkingStartTimeRef.current) / 1000);
-                            setMessageThinkingDuration(activeChatId, newAssistantMessageId, duration);
-                            thinkingStartTimeRef.current = null;
-                          }
-                          setMessageError(activeChatId, newAssistantMessageId, error.message);
-                          setStreamingStatus(null);
-                          setStreamingMessageId(null);
-                          setLoading(false);
-                        },
-                        signal: abortControllerRef.current!.signal,
-                      });
-                    } catch (error) {
-                      const errMessage = error instanceof Error ? error.message : "Something went wrong";
-                      setMessageError(activeChatId, newAssistantMessageId, errMessage);
-                      if (thinkingStartTimeRef.current) {
-                        thinkingStartTimeRef.current = null;
-                      }
-                      setStreamingStatus(null);
-                      setLoading(false);
-                      setStreamingMessageId(null);
-                    }
+                    await startAssistantStream({
+                      chatId: activeChatId,
+                      assistantMessageId: newAssistantMessageId,
+                      messages: apiMessages,
+                      modelId,
+                      providerId: provider.id,
+                      requestedModelId: isAutoRouter ? modelId : undefined,
+                    });
                   }
                 }}
                 previousMessages={activeChat?.messages.slice(0, index)}
@@ -1997,7 +2164,8 @@ export function ChatView() {
               ) : (
                 <div key={message.id}>{bubble}</div>
               );
-            })
+            })}
+            </>
           )}
         </div>
       </div>
@@ -2015,7 +2183,7 @@ export function ChatView() {
       <FloatingInput
         input={input}
         setInput={setInput}
-        isLoading={isLoading}
+        isLoading={isActiveChatStreaming}
         onSubmit={handleSubmit}
         onStop={handleStop}
         textareaRef={textareaRef}

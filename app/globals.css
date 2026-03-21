@@ -48,6 +48,8 @@
 }
 
 :root {
+  /* Shimmer glow: lighter than muted-foreground (0.556) so it's always visible in light mode */
+  --shimmer-glow: oklch(0.82 0 0);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -83,6 +85,8 @@
 }
 
 .dark {
+  /* Shimmer glow: near-white, clearly brighter than muted-foreground (0.708) in dark mode */
+  --shimmer-glow: oklch(0.97 0 0);
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -144,56 +148,68 @@
   display: none;
 }
 
-/* Streaming status shimmer */
-@keyframes shimmer-slide {
-  0% { transform: translateX(35%); }
-  100% { transform: translateX(-35%); }
+/* Bottom-edge shadow under sticky headers. Base + -on share the same two layers so box-shadow can interpolate (none → shadow jumps; rgba 0 → rgba does not). */
+@layer utilities {
+  .shadow-header-scroll {
+    box-shadow:
+      0 10px 28px -8px rgba(0, 0, 0, 0),
+      inset 0 -10px 14px -12px rgba(0, 0, 0, 0);
+  }
+  .shadow-header-scroll.shadow-header-scroll-on {
+    box-shadow:
+      0 10px 28px -8px rgba(0, 0, 0, 0.13),
+      inset 0 -10px 14px -12px rgba(0, 0, 0, 0.065);
+  }
+  .dark .shadow-header-scroll {
+    box-shadow:
+      0 12px 32px -8px rgba(0, 0, 0, 0),
+      inset 0 -10px 16px -12px rgba(0, 0, 0, 0);
+  }
+  .dark .shadow-header-scroll.shadow-header-scroll-on {
+    box-shadow:
+      0 12px 32px -8px rgba(0, 0, 0, 0.38),
+      inset 0 -10px 16px -12px rgba(0, 0, 0, 0.17);
+  }
 }
 
-.shimmer-text {
-  position: relative;
-  display: inline-block;
-  color: var(--muted-foreground);
+/*
+  Unified AI status shimmer.
+  --shimmer-glow is always LIGHTER than --muted-foreground in both themes,
+  so the bright band is visible regardless of light/dark mode.
+  background-position goes from 150% -> -50% which moves the highlight left-to-right.
+*/
+@keyframes unified-shimmer-shift {
+  0%   { background-position: 120% center; }
+  100% { background-position: -20% center; }
 }
 
-.shimmer-text::after {
-  content: attr(data-text);
-  position: absolute;
-  inset: 0;
+.unified-shimmer-text {
   display: inline-block;
-  color: transparent;
-  pointer-events: none;
-
-  background: linear-gradient(
+  padding-bottom: 1px; /* prevents background-clip: text from clipping descenders */
+  background-image: linear-gradient(
     90deg,
     var(--muted-foreground) 0%,
-    var(--muted-foreground) 35%,
-    var(--foreground) 50%,
-    var(--muted-foreground) 65%,
+    var(--muted-foreground) 30%,
+    var(--shimmer-glow)     50%,
+    var(--muted-foreground) 70%,
     var(--muted-foreground) 100%
   );
-  background-size: 200% 100%;
+  background-size: 250% 100%;
   -webkit-background-clip: text;
   background-clip: text;
+  color: transparent;
   -webkit-text-fill-color: transparent;
-
-  animation: shimmer-slide 7.5s linear infinite;
+  animation: unified-shimmer-shift 1.6s ease-in-out infinite;
+  will-change: background-position;
 }
 
+/* Chevron icon shimmer for the thinking block */
 @keyframes shimmer-icon-color {
   0%, 40%, 60%, 100% { color: var(--muted-foreground); }
-  50% { color: var(--foreground); }
+  50% { color: var(--shimmer-glow); }
 }
 
 .shimmer-icon {
-  animation: shimmer-icon-color 7.5s linear infinite;
+  animation: shimmer-icon-color 1.6s ease-in-out infinite;
 }
 
-@keyframes status-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.animate-status-fade-in {
-  animation: status-fade-in 300ms ease-out forwards;
-}

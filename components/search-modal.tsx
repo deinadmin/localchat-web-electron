@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useChatStore, Chat } from "@/lib/chat-store";
+import { getPickerModelIdFromLastAssistant } from "@/lib/chat-model-preference";
 import { useProvidersStore } from "@/lib/providers-store";
 import { parseModelName } from "@/components/model-picker";
 import { IconSearch, IconMessage, IconPin } from "@tabler/icons-react";
@@ -51,16 +52,12 @@ function formatRelativeTime(date: Date): string {
 }
 
 function getLastModelName(chat: Chat, providers: ReturnType<typeof useProvidersStore.getState>["providers"]): string | null {
-  // Find the last assistant message with a modelId
-  const lastAssistantMessage = [...chat.messages]
-    .reverse()
-    .find((m) => m.role === "assistant" && m.modelId);
-
-  if (!lastAssistantMessage?.modelId) return null;
+  const pickerModelId = getPickerModelIdFromLastAssistant(chat.messages);
+  if (!pickerModelId) return null;
 
   // Find the model name from providers
   for (const provider of providers) {
-    const model = provider.models?.find((m) => m.id === lastAssistantMessage.modelId);
+    const model = provider.models?.find((m) => m.id === pickerModelId);
     if (model) {
       // Use parseModelName to get the clean name without provider prefix
       const { cleanName } = parseModelName(model.id, model.name);
@@ -69,8 +66,7 @@ function getLastModelName(chat: Chat, providers: ReturnType<typeof useProvidersS
   }
 
   // Fallback: extract model name from ID (e.g., "google/gemini-3-flash" -> "gemini-3-flash")
-  const modelId = lastAssistantMessage.modelId;
-  const parts = modelId.split("/");
+  const parts = pickerModelId.split("/");
   return parts[parts.length - 1];
 }
 
@@ -141,16 +137,13 @@ export function SearchModal({ open, onOpenChange }: SearchModalProps) {
     // Switch to the last model used in this chat
     const chat = getChatById(chatId);
     if (chat) {
-      const lastAssistantMessage = [...chat.messages]
-        .reverse()
-        .find((m) => m.role === "assistant" && m.modelId);
-      
-      if (lastAssistantMessage?.modelId) {
-        const provider = providers.find((p) => 
-          p.models?.some((m) => m.id === lastAssistantMessage.modelId)
+      const pickerModelId = getPickerModelIdFromLastAssistant(chat.messages);
+      if (pickerModelId) {
+        const provider = providers.find((p) =>
+          p.models?.some((m) => m.id === pickerModelId)
         );
         if (provider) {
-          setSelectedModel(provider.id, lastAssistantMessage.modelId);
+          setSelectedModel(provider.id, pickerModelId);
         }
       }
     }
